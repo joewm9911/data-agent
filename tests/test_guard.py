@@ -49,3 +49,22 @@ def test_cte_select_allowed():
 def test_unparsable_rejected():
     d = prepare_statement("SELEC id FRM", "clickhouse", POLICY)
     assert not d.allowed
+
+
+def test_referenced_objects_extraction():
+    from da_governance import referenced_objects
+
+    objs = referenced_objects(
+        "SELECT * FROM orders o JOIN crm_contacts c ON o.cust_no = c.client_code",
+        "sqlite",
+    )
+    assert objs == [("main", "crm_contacts"), ("main", "orders")]
+
+
+def test_referenced_objects_cte_not_counted():
+    from da_governance import referenced_objects
+
+    objs = referenced_objects(
+        "WITH t AS (SELECT * FROM orders) SELECT * FROM t", "sqlite"
+    )
+    assert objs == [("main", "orders")]

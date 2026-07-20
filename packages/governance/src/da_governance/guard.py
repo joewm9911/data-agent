@@ -36,6 +36,26 @@ def prepare_statement(statement: str, dialect: str, policy: GuardPolicy) -> Guar
     )
 
 
+def referenced_objects(
+    statement: str, dialect: str, default_database: str = "main"
+) -> list[tuple[str, str]]:
+    """提取语句引用的 (database, table) 列表，供执行前权限判定（6.1 第一/二层的执行点）。
+
+    解析失败返回空列表——调用方应让护栏的解析错误路径先行拒绝。
+    """
+    try:
+        tree = sqlglot.parse_one(statement, read=dialect)
+    except sqlglot.errors.ParseError:
+        return []
+    cte_names = {cte.alias_or_name for cte in tree.find_all(exp.CTE)}
+    objects = []
+    for table in tree.find_all(exp.Table):
+        if table.name in cte_names:
+            continue
+        objects.append((table.db or default_database, table.name))
+    return sorted(set(objects))
+
+
 def _is_read_only(tree: exp.Expression) -> bool:
     """SELECT（含 CTE/UNION）为只读；DDL/DML/SET 等一律拒绝。"""
     if isinstance(tree, (exp.Select, exp.Union)):

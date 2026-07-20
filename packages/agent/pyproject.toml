@@ -1,0 +1,26 @@
+[project]
+name = "da-agent"
+version = "0.1.0"
+description = "分析引擎 M1 切片：问答四件套 agent loop（架构文档 5.1）"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7",
+    "anthropic>=0.40",
+    "da-types",
+    "da-governance",
+    "da-connectors",
+    "da-semantic",
+]
+
+[tool.uv.sources]
+da-types = { workspace = true }
+da-governance = { workspace = true }
+da-connectors = { workspace = true }
+da-semantic = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/da_agent"]

@@ -1,12 +1,13 @@
 [project]
 name = "da-evals"
 version = "0.1.0"
-description = "Eval harness：golden set 管理与回归（架构文档 8.3）。M1 落地。"
+description = "Eval harness：golden 场景 + 回归（架构文档 8.3）"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2.7", "da-types"]
+dependencies = ["pydantic>=2.7", "da-types", "da-semantic"]
 
 [tool.uv.sources]
 da-types = { workspace = true }
+da-semantic = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

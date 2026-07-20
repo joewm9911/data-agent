@@ -16,3 +16,7 @@ build/
 # 本地环境
 .env
 *.local.yaml
+
+# 演示产物
+examples/cx.db
+examples/audit.jsonl

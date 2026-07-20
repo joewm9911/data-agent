@@ -20,6 +20,7 @@ dev = [
     "da-connectors",
     "da-semantic",
     "da-runtime",
+    "da-agent",
     "da-evals",
 ]
 
@@ -30,6 +31,7 @@ da-governance = { workspace = true }
 da-connectors = { workspace = true }
 da-semantic = { workspace = true }
 da-runtime = { workspace = true }
+da-agent = { workspace = true }
 da-evals = { workspace = true }
 
 [tool.pytest.ini_options]
@@ -46,13 +48,15 @@ select = ["E", "F", "I", "UP", "B"]
 # 架构依赖方向强制（docs/architecture-design.md 第 2 章）：
 # runtime → semantic → connectors → (governance, platform, types)
 [tool.importlinter]
-root_packages = ["da_types", "da_platform", "da_governance", "da_connectors", "da_semantic", "da_runtime"]
+root_packages = ["da_types", "da_platform", "da_governance", "da_connectors", "da_semantic", "da_agent", "da_evals", "da_runtime"]
 
 [[tool.importlinter.contracts]]
 name = "分层单向依赖"
 type = "layers"
 layers = [
     "da_runtime",
+    "da_agent",
+    "da_evals",
     "da_semantic",
     "da_connectors",
     "da_governance",
