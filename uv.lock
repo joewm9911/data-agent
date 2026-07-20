@@ -9,6 +9,7 @@ resolution-markers = [
 [manifest]
 members = [
     "da-agent",
+    "da-api",
     "da-connectors",
     "da-evals",
     "da-governance",
@@ -17,6 +18,15 @@ members = [
     "da-semantic",
     "da-types",
     "data-agent",
+]
+
+[[package]]
+name = "annotated-doc"
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/57/ba/046ceea27344560984e26a590f90bc7f4a75b06701f653222458922b558c/annotated_doc-0.0.4.tar.gz", hash = "sha256:fbcda96e87e9c92ad167c2e53839e57503ecfda18804ea28102353485033faa4", size = 7288, upload-time = "2025-11-10T22:07:42.062Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1e/d3/26bf1008eb3d2daa8ef4cacc7f3bfdc11818d111f7e2d0201bc6e3b49d45/annotated_doc-0.0.4-py3-none-any.whl", hash = "sha256:571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320", size = 5303, upload-time = "2025-11-10T22:07:40.673Z" },
 ]
 
 [[package]]
@@ -174,6 +184,33 @@ requires-dist = [
 ]
 
 [[package]]
+name = "da-api"
+version = "0.1.0"
+source = { editable = "apps/api" }
+dependencies = [
+    { name = "da-agent" },
+    { name = "da-connectors" },
+    { name = "da-evals" },
+    { name = "da-governance" },
+    { name = "da-runtime" },
+    { name = "da-semantic" },
+    { name = "da-types" },
+    { name = "fastapi" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "da-agent", editable = "packages/agent" },
+    { name = "da-connectors", editable = "packages/connectors" },
+    { name = "da-evals", editable = "packages/evals" },
+    { name = "da-governance", editable = "packages/governance" },
+    { name = "da-runtime", editable = "packages/runtime" },
+    { name = "da-semantic", editable = "packages/semantic" },
+    { name = "da-types", editable = "packages/core-types" },
+    { name = "fastapi", specifier = ">=0.115" },
+]
+
+[[package]]
 name = "da-connectors"
 version = "0.1.0"
 source = { editable = "packages/connectors" }
@@ -268,14 +305,18 @@ name = "da-semantic"
 version = "0.1.0"
 source = { editable = "packages/semantic" }
 dependencies = [
+    { name = "da-connectors" },
     { name = "da-types" },
     { name = "pydantic" },
+    { name = "sqlglot" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "da-connectors", editable = "packages/connectors" },
     { name = "da-types", editable = "packages/core-types" },
     { name = "pydantic", specifier = ">=2.7" },
+    { name = "sqlglot", specifier = ">=25.0" },
 ]
 
 [[package]]
@@ -297,6 +338,7 @@ source = { virtual = "." }
 [package.dev-dependencies]
 dev = [
     { name = "da-agent" },
+    { name = "da-api" },
     { name = "da-connectors" },
     { name = "da-evals" },
     { name = "da-governance" },
@@ -304,6 +346,7 @@ dev = [
     { name = "da-runtime" },
     { name = "da-semantic" },
     { name = "da-types" },
+    { name = "httpx" },
     { name = "import-linter" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -315,6 +358,7 @@ dev = [
 [package.metadata.requires-dev]
 dev = [
     { name = "da-agent", editable = "packages/agent" },
+    { name = "da-api", editable = "apps/api" },
     { name = "da-connectors", editable = "packages/connectors" },
     { name = "da-evals", editable = "packages/evals" },
     { name = "da-governance", editable = "packages/governance" },
@@ -322,6 +366,7 @@ dev = [
     { name = "da-runtime", editable = "packages/runtime" },
     { name = "da-semantic", editable = "packages/semantic" },
     { name = "da-types", editable = "packages/core-types" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "import-linter", specifier = ">=2.0" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
@@ -344,6 +389,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e0/4d/f332313098c1de1b2d2ff91cf2674415cc7cddab2ca1b01ae29774bd5fdf/docstring_parser-0.18.0.tar.gz", hash = "sha256:292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015", size = 29341, upload-time = "2026-04-14T04:09:19.867Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/5f/ed01f9a3cdffbd5a008556fc7b2a08ddb1cc6ace7effa7340604b1d16699/docstring_parser-0.18.0-py3-none-any.whl", hash = "sha256:b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b", size = 22484, upload-time = "2026-04-14T04:09:18.638Z" },
+]
+
+[[package]]
+name = "fastapi"
+version = "0.139.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cd/95/d3f0ae10836324a2eab98a52b61210ac609f08200bf4bb0dc8132d32f78a/fastapi-0.139.2.tar.gz", hash = "sha256:333145a6891e9b5b3cfceb69baf817e8240cde4d4588ae5a10bf56ffacb6255e", size = 423428, upload-time = "2026-07-16T15:06:17.912Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5f/c7/cb03251d9dfb177246a9809a76f189d21df32dbd4a845951881d11323b7f/fastapi-0.139.2-py3-none-any.whl", hash = "sha256:b9ad015a835173d59865e2f5d8296fbc2b317bf56a2ba1a5bfbdd03de2fd4b1c", size = 130234, upload-time = "2026-07-16T15:06:19.557Z" },
 ]
 
 [[package]]
@@ -886,6 +947,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/43/ed/a6c45aec29353b6392ea34548c40af3ac6ffd6bc5572cf23b2ce250876fc/sqlglot-30.12.0.tar.gz", hash = "sha256:6b8369704662d4f654bc934cea4dd31c916c2a571b389210cb9e951a275e5fd9", size = 5905110, upload-time = "2026-06-26T14:09:40.408Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/db/9e/82a390ecc85f066ff80affa01d195f744e3de60ad4d695b8de31c9a66da3/sqlglot-30.12.0-py3-none-any.whl", hash = "sha256:86cccc610073c645c03e72b55b60ae0518aa3253a7fc3bd56551370d003c6554", size = 707583, upload-time = "2026-06-26T14:09:38.525Z" },
+]
+
+[[package]]
+name = "starlette"
+version = "1.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/eb/e3/7c1dc7381d9f8ab7d854328ebfa884e62cb3f3d8549ddfd37c7814f42afa/starlette-1.3.1.tar.gz", hash = "sha256:05d0213193f2fbaae60e2ecb593b4add4262ad4e46536b54abe36f11a71724e0", size = 2703240, upload-time = "2026-06-12T09:23:11.602Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/bb/2799cc2ede3ed41131f8975621e7213dfc7ef4acbbaadfa440f32500c370/starlette-1.3.1-py3-none-any.whl", hash = "sha256:c7372aae11c3c3f26a42df7bd626cec2f47d03483d261d369516a615a53714c6", size = 73632, upload-time = "2026-06-12T09:23:10.017Z" },
 ]
 
 [[package]]

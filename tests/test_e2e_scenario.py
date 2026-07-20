@@ -8,7 +8,7 @@ import os
 import re
 
 import pytest
-from da_agent import DataAnalystAgent, LLMClient, LLMConfig
+from da_agent import DataAnalystAgent, LLMClient, LLMConfig, MetricNode
 from da_connectors.sqlite import SQLiteConnector
 from da_evals.scenario_cx import (
     GOLDEN_GMV_JUNE,
@@ -45,6 +45,15 @@ def scenario(tmp_path_factory):
     return db_path
 
 
+TICKET_TREE = MetricNode(
+    name="工单量",
+    value_sql="SELECT COUNT(*) FROM cs_tickets WHERE {where}",
+    dimensions={
+        "工单类型": "SELECT cat, COUNT(*) FROM cs_tickets WHERE {where} GROUP BY cat",
+    },
+)
+
+
 @pytest.fixture()
 async def agent(scenario):
     store = InMemorySemanticStore()
@@ -56,6 +65,7 @@ async def agent(scenario):
         audit_sink=sink,
         llm=LLMClient(LLMConfig.from_env()),
         guard=GuardPolicy(max_result_rows=200),
+        metric_trees={"工单量": TICKET_TREE},
     )
     return a
 
@@ -95,6 +105,17 @@ async def test_cross_table_and_attribution(scenario, agent):
         "2026年7月的工单量相比6月变化如何？主要是哪类工单驱动的？", ANALYST
     )
     assert "退款" in answer.text
+
+
+async def test_attribution_tool_used_by_llm(scenario, agent):
+    """归因引擎经 LLM 工具调用：'为什么'类问题应触发 run_attribution 并给出正确驱动。"""
+    answer = await agent.ask(
+        "为什么2026年7月的工单量比6月高？用归因工具分析", ANALYST
+    )
+    assert "退款" in answer.text
+    assert any(e.statement.startswith("attribution:") and e.ok for e in answer.executed), (
+        f"未调用归因工具: {[e.statement for e in answer.executed]}"
+    )
 
 
 async def test_no_permission_no_data(scenario):

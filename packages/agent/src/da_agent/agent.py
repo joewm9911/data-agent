@@ -1,7 +1,8 @@
-"""数据分析 agent loop（M1 问答切片）。
+"""数据分析 agent loop（分析引擎核心）。
 
-流程：语义上下文注入 → LLM 循环（run_sql 工具）→ 护栏执行 → 错误回流自纠错 → 四件套回答。
-全链路审计：question / generation / guard / execution / presentation 六阶段落审计链。
+流程：语义上下文注入 → LLM 循环（run_sql / run_attribution 工具）→ 护栏执行 →
+错误回流自纠错 → 四件套回答。会话连续性：接受历史消息、返回可持久化转录（7.2）。
+全链路审计：question / generation / guard / execution / presentation 落审计链。
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import uuid
 from typing import Any
 
 from da_connectors.base import Connector, ConnectorError, GuardRejectedError
-from da_governance import AuditEvent, AuditSink, referenced_objects
+from da_governance import AuditEvent, AuditSink, referenced_objects, sanitize_result_text
 from da_semantic import SemanticStore
 from da_types import (
     CatalogSnapshot,
@@ -24,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from da_agent.context import build_system_prompt
 from da_agent.llm import LLMClient
+from da_agent.metric_tree import MetricNode, MetricTreeEngine
 
 RUN_SQL_TOOL = {
     "name": "run_sql",
@@ -35,6 +37,25 @@ RUN_SQL_TOOL = {
             "purpose": {"type": "string", "description": "这条 SQL 想验证/计算什么"},
         },
         "required": ["statement"],
+    },
+}
+
+ATTRIBUTION_TOOL = {
+    "name": "run_attribution",
+    "description": (
+        "指标归因引擎：对注册过的指标做两期对比+维度分解，返回带贡献度排序的诊断报告。"
+        "回答'为什么涨/跌'类问题优先用本工具，不要手写多条 SQL。"
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "metric": {"type": "string", "description": "指标树名称"},
+            "base_where": {"type": "string", "description": "基期过滤条件（SQL WHERE 片段）"},
+            "current_where": {"type": "string", "description": "当期过滤条件（SQL WHERE 片段）"},
+            "base_label": {"type": "string"},
+            "current_label": {"type": "string"},
+        },
+        "required": ["metric", "base_where", "current_where"],
     },
 }
 
@@ -57,6 +78,8 @@ class Answer(BaseModel):
     steps: int = 0
     session_id: str
     turn_id: str
+    # 可持久化转录（会话连续性，7.2）：下一回合作为 history 传回
+    transcript: list[dict] = Field(default_factory=list)
 
 
 class DataAnalystAgent:
@@ -67,12 +90,15 @@ class DataAnalystAgent:
         audit_sink: AuditSink,
         llm: LLMClient,
         guard: GuardPolicy | None = None,
+        metric_trees: dict[str, MetricNode] | None = None,
     ) -> None:
         self._connector = connector
         self._semantics = semantic_store
         self.audit_sink = audit_sink
         self._llm = llm
         self._guard = guard or GuardPolicy()
+        self._metric_trees = metric_trees or {}
+        self._attribution = MetricTreeEngine(connector, self._guard)
         self._catalog: CatalogSnapshot | None = None
 
     async def _get_catalog(self) -> CatalogSnapshot:
@@ -80,8 +106,20 @@ class DataAnalystAgent:
             self._catalog = await self._connector.get_metadata(MetadataScope())
         return self._catalog
 
+    def _tools(self) -> list[dict[str, Any]]:
+        tools = [RUN_SQL_TOOL]
+        if self._metric_trees:
+            tool = dict(ATTRIBUTION_TOOL)
+            tool["description"] += f" 已注册指标树：{sorted(self._metric_trees)}"
+            tools.append(tool)
+        return tools
+
     async def ask(
-        self, question: str, identity: UserIdentity, session_id: str | None = None
+        self,
+        question: str,
+        identity: UserIdentity,
+        session_id: str | None = None,
+        history: list[dict] | None = None,
     ) -> Answer:
         session_id = session_id or uuid.uuid4().hex
         turn_id = uuid.uuid4().hex
@@ -104,16 +142,18 @@ class DataAnalystAgent:
         system = await build_system_prompt(
             self._connector, self._semantics, catalog, identity
         )
-        messages: list[dict[str, Any]] = [{"role": "user", "content": question}]
+        messages: list[dict[str, Any]] = list(history or [])
+        messages.append({"role": "user", "content": question})
         executed: list[ExecutedSQL] = []
 
         for step in range(1, MAX_STEPS + 1):
-            response = await self._llm.create(system, messages, tools=[RUN_SQL_TOOL])
+            response = await self._llm.create(system, messages, tools=self._tools())
             tool_calls = [b for b in response.content if b.type == "tool_use"]
 
             if not tool_calls:
                 text = "".join(b.text for b in response.content if b.type == "text")
                 await audit("presentation", {"text": text, "steps": step})
+                messages.append({"role": "assistant", "content": response.content})
                 return Answer(
                     question=question,
                     text=text,
@@ -121,15 +161,25 @@ class DataAnalystAgent:
                     steps=step,
                     session_id=session_id,
                     turn_id=turn_id,
+                    transcript=_serialize_messages(messages),
                 )
 
             messages.append({"role": "assistant", "content": response.content})
             tool_results = []
             for call in tool_calls:
-                statement = call.input.get("statement", "")
-                purpose = call.input.get("purpose", "")
-                await audit("generation", {"statement": statement, "purpose": purpose})
-                record, result_text = await self._run_sql(statement, purpose, identity, audit)
+                if call.name == "run_attribution":
+                    record, result_text = await self._run_attribution(
+                        call.input, identity, audit
+                    )
+                else:
+                    statement = call.input.get("statement", "")
+                    purpose = call.input.get("purpose", "")
+                    await audit(
+                        "generation", {"statement": statement, "purpose": purpose}
+                    )
+                    record, result_text = await self._run_sql(
+                        statement, purpose, identity, audit
+                    )
                 executed.append(record)
                 tool_results.append(
                     {
@@ -150,7 +200,42 @@ class DataAnalystAgent:
             steps=MAX_STEPS,
             session_id=session_id,
             turn_id=turn_id,
+            transcript=_serialize_messages(messages),
         )
+
+    async def _run_attribution(
+        self, args: dict[str, Any], identity: UserIdentity, audit
+    ) -> tuple[ExecutedSQL, str]:
+        metric_name = args.get("metric", "")
+        node = self._metric_trees.get(metric_name)
+        label = f"attribution:{metric_name}"
+        if node is None:
+            record = ExecutedSQL(
+                statement=label, ok=False, error=f"未注册的指标树: {metric_name}"
+            )
+            return record, f"未注册的指标树: {metric_name}，可用：{sorted(self._metric_trees)}"
+        await audit("generation", {"attribution": args})
+        try:
+            report = await self._attribution.attribute(
+                node,
+                base_where=args.get("base_where", "1=1"),
+                current_where=args.get("current_where", "1=1"),
+                identity=identity,
+                base_label=args.get("base_label", "基期"),
+                current_label=args.get("current_label", "当期"),
+            )
+        except ConnectorError as e:
+            record = ExecutedSQL(statement=label, ok=False, error=str(e))
+            return record, f"归因执行失败：{e}"
+        await audit(
+            "execution",
+            {"attribution": metric_name, "ok": True, "evidence_sql": report.evidence_sql},
+        )
+        record = ExecutedSQL(
+            statement=label, purpose="metric tree attribution", ok=True,
+            row_count=len(report.steps),
+        )
+        return record, report.narrative()
 
     async def _run_sql(
         self, statement: str, purpose: str, identity: UserIdentity, audit
@@ -186,16 +271,14 @@ class DataAnalystAgent:
             record = ExecutedSQL(statement=statement, purpose=purpose, ok=False, error=str(e))
             return record, f"查询执行失败：{e}。请检查表名/列名并修正 SQL。"
 
-        await audit(
-            "guard", {"statement": statement, "allowed": True}
-        )
+        await audit("guard", {"statement": statement, "allowed": True})
         await audit(
             "execution",
             {"statement": statement, "ok": True, "rows": len(result.rows)},
         )
         header = ",".join(c.name for c in result.columns)
         body = "\n".join(",".join(str(v) for v in row) for row in result.rows)
-        text = f"{header}\n{body}"
+        text = sanitize_result_text(f"{header}\n{body}")  # 注入防御（6.2-2）
         if len(text) > MAX_RESULT_CHARS:
             text = text[:MAX_RESULT_CHARS] + f"\n...（已截断，共 {len(result.rows)} 行）"
         if result.truncated:
@@ -204,3 +287,21 @@ class DataAnalystAgent:
             statement=statement, purpose=purpose, ok=True, row_count=len(result.rows)
         )
         return record, text
+
+
+def _serialize_messages(messages: list[dict[str, Any]]) -> list[dict]:
+    """转录序列化：anthropic 内容块 → 纯 dict（可 JSON 持久化，下一回合原样传回）。"""
+    out: list[dict] = []
+    for m in messages:
+        content = m["content"]
+        if isinstance(content, str):
+            out.append({"role": m["role"], "content": content})
+            continue
+        blocks = []
+        for b in content:
+            if isinstance(b, dict):
+                blocks.append(b)
+            elif hasattr(b, "model_dump"):
+                blocks.append(b.model_dump(exclude_none=True))
+        out.append({"role": m["role"], "content": blocks})
+    return out

@@ -3,10 +3,11 @@ name = "da-semantic"
 version = "0.1.0"
 description = "语义层引擎：数据模型 + 版本化存储（架构文档 4）"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2.7", "da-types"]
+dependencies = ["pydantic>=2.7", "sqlglot>=25.0", "da-types", "da-connectors"]
 
 [tool.uv.sources]
 da-types = { workspace = true }
+da-connectors = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

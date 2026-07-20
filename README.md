@@ -12,12 +12,18 @@
 packages/
   core-types/   # 跨模块共享契约（Query IR / UserIdentity / GuardPolicy …）
   platform/     # 基础设施抽象层：lease/队列/pubsub/blob 最小原语 + provider 实现
-  governance/   # 治理平面：查询护栏（sqlglot）+ 全链路审计
-  connectors/   # 接入层：Connector 四接口 + ClickHouse 适配器（含 system.query_log 挖掘入口）
-  semantic/     # 语义层引擎：业务概念模型 + 版本化存储
-  runtime/      # Agent 运行时：回合模型 + 会话串行锁（fencing token）
-  evals/        # Eval harness（M1 落地）
-tests/          # 跨包测试（护栏语义 / lease 一致性 / 版本化 / 适配器契约）
+  governance/   # 治理平面：护栏（只读/LIMIT/最小聚合HAVING/注入中和）+ 全链路审计
+  connectors/   # 接入层：四接口抽象 + CK/SQLite 适配器 + conformance 套件
+                #   + dbt manifest 导入器 + MCP 适配器桥
+  semantic/     # 语义层引擎：模型/版本化存储/查询日志挖掘/profiling/证据图实体归一
+                #   /确认队列/学习回路/冷启动流水线/开放格式导出
+  agent/        # 分析引擎：问答四件套 loop/指标树归因/playbook/统计守门员/主动层/报告
+  runtime/      # 运行时：回合队列 worker/会话串行锁/快照水合/controller 生命周期
+  evals/        # Eval harness：golden 场景/判分/准确率仪表盘/回归门槛
+apps/
+  api/          # 交付层 API：对话回合/报告/管理控制台（权限/确认队列/审计/仪表盘）
+tests/          # 60+ 测试：确定性单测/集成测 + live LLM 端到端（无 key 自动跳过）
+examples/       # demo_cx.py：真实 CX 场景端到端演示（MiniMax 驱动）
 ```
 
 ## 开发
@@ -33,4 +39,6 @@ uv run lint-imports  # 架构依赖方向检查（分层单向依赖）
 
 ## 当前阶段
 
-M0（地基）：monorepo 骨架、core-types 契约、Connector 抽象 + CK 适配器、语义层版本化存储、会话串行锁、审计链。详见架构文档第 13 章。
+架构文档 M0–M3 的产品特性已全部落码并有测试覆盖（60+ 用例，含 golden 对照与 live LLM e2e）。
+生产化基础设施（Postgres/Redis/S3 provider、K8s 会话容器、SSO、Web 前端）走 platform 抽象层，
+当前为内存/单机实现，接口即契约。运行演示：`uv run python examples/demo_cx.py`（需 `.env` 配置 LLM key）。
