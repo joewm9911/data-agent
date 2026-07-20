@@ -5,6 +5,7 @@ description = "交付层 API：对话/回合、报告、管理控制台（架构
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
+    "uvicorn>=0.30",
     "da-types",
     "da-platform",
     "da-governance",

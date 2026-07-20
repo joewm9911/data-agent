@@ -82,6 +82,15 @@ def _build_state() -> AppState:
         confirmations=ConfirmationQueue(semantic_store),
     )
 
+    # 演示模式：默认 sqlite 场景库时播种语义层 + 授权演示用户（生产配置下不生效）
+    if connector_spec == "sqlite:examples/cx.db":
+        import asyncio
+
+        from da_evals.scenario_cx import seed_semantics
+
+        asyncio.get_event_loop().run_until_complete(seed_semantics(semantic_store))
+        state.permissions["analyst_1"] = "main"
+
     kwargs = {"executor": state.make_executor()}
     if os.environ.get("DA_REDIS_URL"):
         from da_platform.redis_providers import (
