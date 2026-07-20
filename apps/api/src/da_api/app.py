@@ -140,6 +140,12 @@ def create_app(state: AppState) -> FastAPI:
     async def index():
         return INDEX_HTML
 
+    @app.get("/console", response_class=HTMLResponse)
+    async def console():
+        from da_api.console import CONSOLE_HTML
+
+        return CONSOLE_HTML
+
     @app.post("/sessions/{sid}/turns")
     async def create_turn(
         sid: str, body: TurnRequest, identity: UserIdentity = Depends(get_identity)
@@ -228,8 +234,88 @@ def create_app(state: AppState) -> FastAPI:
         return {"item_id": item.item_id, "status": item.status}
 
     @app.get("/admin/audit")
-    async def list_audit(limit: int = 50):
-        return [e.model_dump(mode="json") for e in state.audit.events[-limit:]]
+    async def list_audit(
+        limit: int = 50,
+        tenant: str = "",
+        stage: str = "",
+        session: str = "",
+    ):
+        """审计查询：按租户/阶段/会话筛选（8.1 运营端视图）。"""
+        events = state.audit.events
+        if tenant:
+            events = [e for e in events if e.tenant_id == tenant]
+        if stage:
+            events = [e for e in events if e.stage == stage]
+        if session:
+            events = [e for e in events if e.session_id == session]
+        return [e.model_dump(mode="json") for e in events[-limit:]]
+
+    @app.get("/admin/overview")
+    async def overview(tenant: str = ""):
+        """运营概览：租户维度的关键统计。"""
+        events = state.audit.events
+        if tenant:
+            events = [e for e in events if e.tenant_id == tenant]
+        semantics = state.agent._semantics  # noqa: SLF001
+        return {
+            "tenant": tenant or "全部",
+            "sources": len(state.sources),
+            "active_source": state.active_source,
+            "entities": len(await semantics.list_names("entity")),
+            "metrics": len(await semantics.list_names("metric")),
+            "verified_answers": len(await semantics.list_names("verified_answer")),
+            "pending_confirmations": len(state.confirmations.pending()),
+            "audit_events": len(events),
+            "sessions": len({e.session_id for e in events}),
+            "users": len({e.identity.user_id for e in events}),
+            "accuracy": state.eval_report.accuracy if state.eval_report else None,
+        }
+
+    @app.get("/admin/users")
+    async def list_users():
+        """权限视图：已授权用户 + 审计中出现过的用户。"""
+        seen = {e.identity.user_id: e.tenant_id for e in state.audit.events}
+        out = {}
+        for uid, dbs in state.permissions.items():
+            out[uid] = {"user_id": uid, "allowed_databases": dbs,
+                        "tenant": seen.get(uid, "")}
+        for uid, tenant in seen.items():
+            out.setdefault(uid, {"user_id": uid, "allowed_databases": "",
+                                 "tenant": tenant})
+        return sorted(out.values(), key=lambda u: u["user_id"])
+
+    @app.post("/admin/sources/{source_id}/test")
+    async def test_source(source_id: str):
+        """接入集成测试：连通性 + 元数据 + 只读护栏三项体检。"""
+        connector = state.sources.get(source_id)
+        if connector is None:
+            raise HTTPException(404, "source not found")
+        checks = []
+        try:
+            catalog = await connector.get_metadata(MetadataScope())
+            checks.append({"name": "连通性/元数据", "ok": True,
+                           "detail": f"{len(catalog.tables)} 张表"})
+        except Exception as e:  # noqa: BLE001
+            checks.append({"name": "连通性/元数据", "ok": False, "detail": str(e)})
+            return {"source_id": source_id, "passed": False, "checks": checks}
+        # 只读护栏体检：写语句必须被拒
+        from da_connectors.base import GuardRejectedError
+        from da_types import GuardPolicy, Query
+
+        table = catalog.tables[0].name if catalog.tables else "t"
+        try:
+            await connector.execute(
+                Query(statement=f"DELETE FROM {table}", dialect=connector.dialect),
+                UserIdentity(tenant_id="_system", user_id="_healthcheck"),
+                GuardPolicy(),
+            )
+            checks.append({"name": "只读护栏", "ok": False, "detail": "写语句未被拦截！"})
+        except GuardRejectedError:
+            checks.append({"name": "只读护栏", "ok": True, "detail": "写语句被正确拒绝"})
+        except Exception as e:  # noqa: BLE001
+            checks.append({"name": "只读护栏", "ok": False, "detail": str(e)})
+        passed = all(c["ok"] for c in checks)
+        return {"source_id": source_id, "passed": passed, "checks": checks}
 
     @app.get("/admin/eval-dashboard")
     async def eval_dashboard():

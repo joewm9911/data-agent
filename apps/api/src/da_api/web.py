@@ -51,6 +51,8 @@ INDEX_HTML = """<!doctype html>
     <button data-tab="audit">审计</button>
     <button data-tab="dash">准确率</button>
   </nav>
+  <a href="/console" style="color:var(--accent);font-size:13px;margin-left:auto">
+    运营控制台 →</a>
 </header>
 <main>
   <section id="chat" class="tab active">
