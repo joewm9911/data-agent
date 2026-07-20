@@ -13,18 +13,27 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
 from da_agent import DataAnalystAgent, render_answer_report
 from da_agent.report import Report
+from da_connectors.base import Connector, ConnectorError
+from da_connectors.dataset import DatasetStore
 from da_evals import EvalReport
 from da_governance import InMemoryAuditSink
 from da_platform.identity import IdentityProvider
 from da_platform.memory import InMemoryPubSub
 from da_runtime import SessionController, SessionMeta, Turn
-from da_semantic import ConfirmationQueue, export_semantic_layer
-from da_types import UserIdentity
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from da_semantic import (
+    ConfirmationQueue,
+    EvidenceGraph,
+    bootstrap_semantic_layer,
+    export_semantic_layer,
+)
+from da_types import MetadataScope, TimeWindow, UserIdentity
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -44,6 +53,12 @@ class AppState:
     sessions: dict[str, SessionMeta] = field(default_factory=dict)
     last_answers: dict[str, object] = field(default_factory=dict)  # session_id -> Answer
     eval_report: EvalReport | None = None
+    # ---- 数据接入产品化（3.2）----
+    sources: dict[str, Connector] = field(default_factory=dict)
+    active_source: str = ""
+    # 换源时重建 agent（保留语义层/审计/LLM，由装配方注入）
+    agent_factory: Callable[[Connector], DataAnalystAgent] | None = None
+    datasets: DatasetStore | None = None
 
     def apply_permissions(self, identity: UserIdentity) -> UserIdentity:
         if identity.user_id in self.permissions:
@@ -89,6 +104,12 @@ class PermissionRequest(BaseModel):
 
 class ConfirmAnswerRequest(BaseModel):
     choice: str
+
+
+class SourceRequest(BaseModel):
+    source_id: str
+    kind: str  # sqlite | clickhouse | hive
+    config: dict = {}
 
 
 def create_app(state: AppState) -> FastAPI:
@@ -220,5 +241,117 @@ def create_app(state: AppState) -> FastAPI:
     @app.get("/admin/semantic/export")
     async def semantic_export():
         return await export_semantic_layer(state.agent._semantics)  # noqa: SLF001
+
+    # ---- 数据接入产品化（3.2：快速接入 SOP 的 API 化）----
+
+    async def _test_source(connector: Connector) -> dict:
+        """连接测试：拉元数据，返回表数（接入第一步的即时反馈）。"""
+        catalog = await connector.get_metadata(MetadataScope())
+        return {"tables": len(catalog.tables),
+                "table_names": [t.name for t in catalog.tables][:20]}
+
+    @app.get("/admin/sources")
+    async def list_sources():
+        return [
+            {"source_id": sid, "kind": type(c).__name__,
+             "active": sid == state.active_source}
+            for sid, c in state.sources.items()
+        ]
+
+    @app.post("/admin/sources")
+    async def add_source(body: SourceRequest):
+        if body.kind == "sqlite":
+            from da_connectors.sqlite import SQLiteConnector
+
+            connector: Connector = SQLiteConnector(body.source_id, body.config["path"])
+        elif body.kind == "clickhouse":
+            from da_connectors.clickhouse import ClickHouseConnector
+
+            ck_kwargs = dict(body.config)
+            connector = ClickHouseConnector(
+                body.source_id, credentials_resolver=lambda identity: ck_kwargs
+            )
+        elif body.kind == "hive":
+            from da_connectors.hive import HiveConnector
+
+            hive_kwargs = dict(body.config)
+            connector = HiveConnector(
+                body.source_id,
+                credentials_resolver=lambda identity: hive_kwargs,
+                database=body.config.get("database", "default"),
+            )
+        else:
+            raise HTTPException(400, f"不支持的数据源类型: {body.kind}")
+
+        try:
+            test = await _test_source(connector)
+        except (ConnectorError, Exception) as e:  # noqa: BLE001 - 连接失败要可读回显
+            raise HTTPException(400, f"连接测试失败: {e}") from e
+        state.sources[body.source_id] = connector
+        return {"source_id": body.source_id, "test": test}
+
+    @app.post("/admin/sources/{source_id}/activate")
+    async def activate_source(source_id: str):
+        connector = state.sources.get(source_id)
+        if connector is None:
+            raise HTTPException(404, "source not found")
+        if state.agent_factory is None:
+            raise HTTPException(500, "agent_factory 未配置")
+        state.agent = state.agent_factory(connector)
+        state.active_source = source_id
+        return {"active_source": source_id}
+
+    @app.post("/admin/sources/{source_id}/bootstrap")
+    async def bootstrap_source(
+        source_id: str, identity: UserIdentity = Depends(get_identity)
+    ):
+        """一键冷启动（第 1 天 SOP，4.2）：挖掘+profiling → 语义草稿+确认队列。"""
+        connector = state.sources.get(source_id)
+        if connector is None:
+            raise HTTPException(404, "source not found")
+        graph = EvidenceGraph()
+        queue = ConfirmationQueue(state.agent._semantics, graph)  # noqa: SLF001
+        state.confirmations = queue
+        window = TimeWindow(
+            start=datetime.now(UTC) - timedelta(days=180), end=datetime.now(UTC)
+        )
+        boot_identity = identity.model_copy(
+            update={"claims": {**identity.claims, "allowed_databases": "main,default"}}
+        )
+        report = await bootstrap_semantic_layer(
+            connector, state.agent._semantics, queue, boot_identity, window  # noqa: SLF001
+        )
+        return {
+            "queries_mined": report.mining.parsed_queries,
+            "entities_created": report.entities_created,
+            "metrics_drafted": report.metrics_drafted,
+            "confirmations_queued": report.confirmations_queued,
+            "profiled_columns": len(report.profiles),
+        }
+
+    @app.post("/admin/datasets/upload")
+    async def upload_dataset(file: UploadFile):
+        """上传即问（零门槛档）：CSV/TSV/Excel → 数据集库表。"""
+        if state.datasets is None:
+            raise HTTPException(500, "数据集存储未配置")
+        content = await file.read()
+        name = (file.filename or "dataset").rsplit(".", 1)
+        table = name[0]
+        suffix = name[1].lower() if len(name) > 1 else "csv"
+        try:
+            if suffix in ("xlsx", "xlsm"):
+                result = state.datasets.ingest_excel(content, table)
+            else:
+                result = state.datasets.ingest_csv(content, table)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        # 数据集源自动注册；首次上传即激活（TTFV：上传→提问一条链）
+        connector = state.datasets.connector("datasets")
+        state.sources["datasets"] = connector
+        if state.agent_factory is not None and state.active_source in ("", "datasets"):
+            state.agent = state.agent_factory(connector)
+            state.active_source = "datasets"
+        return {"table": result.table, "columns": result.columns, "rows": result.rows,
+                "source_id": "datasets", "activated": state.active_source == "datasets"}
 
     return app

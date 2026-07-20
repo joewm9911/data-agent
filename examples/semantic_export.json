@@ -1,0 +1,73 @@
+{
+  "semantic_layer": {
+    "entities": [
+      {
+        "name": "客户",
+        "canonical_key": "customer_id",
+        "aliases": [
+          "会员",
+          "买家",
+          "用户"
+        ],
+        "bindings": [
+          {
+            "table": "orders",
+            "column": "cust_no",
+            "grain": "order"
+          },
+          {
+            "table": "crm_contacts",
+            "column": "client_code",
+            "grain": "customer"
+          },
+          {
+            "table": "cs_tickets",
+            "column": "customer_id",
+            "grain": "ticket"
+          }
+        ],
+        "joins": [
+          {
+            "sql_on": "orders.cust_no = crm_contacts.client_code",
+            "confidence": 1.0
+          },
+          {
+            "sql_on": "cs_tickets.customer_id = crm_contacts.client_code",
+            "confidence": 1.0
+          }
+        ],
+        "version": 1
+      }
+    ],
+    "metrics": [
+      {
+        "name": "GMV",
+        "description": "已支付订单（stat=1）金额汇总，按支付日期 pay_dt 归属，排除测试账号（cust_no 以 TEST 开头）",
+        "expr": "SUM(order_amt) WHERE stat = 1 AND cust_no NOT LIKE 'TEST%'",
+        "dimensions": [
+          "day",
+          "chan"
+        ],
+        "meta": {
+          "verified": true,
+          "restricted": false,
+          "version": 1
+        }
+      },
+      {
+        "name": "工单量",
+        "description": "按 created_at 统计的客服工单数量",
+        "expr": "COUNT(*) FROM cs_tickets",
+        "dimensions": [
+          "day",
+          "cat"
+        ],
+        "meta": {
+          "verified": true,
+          "restricted": false,
+          "version": 1
+        }
+      }
+    ]
+  }
+}

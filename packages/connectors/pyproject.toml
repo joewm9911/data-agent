@@ -7,6 +7,8 @@ dependencies = ["pydantic>=2.7", "da-types", "da-governance"]
 
 [project.optional-dependencies]
 clickhouse = ["clickhouse-connect>=0.8"]
+hive = ["pyhive>=0.7", "thrift>=0.16"]
+excel = ["openpyxl>=3.1"]
 
 [tool.uv.sources]
 da-types = { workspace = true }

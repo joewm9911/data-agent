@@ -65,22 +65,34 @@ def _build_state() -> AppState:
     playbooks.register(cx_ticket_anomaly_playbook())
     playbooks.register(channel_review_playbook())
 
-    agent = DataAnalystAgent(
-        connector=connector,
-        semantic_store=semantic_store,
-        audit_sink=audit,  # type: ignore[arg-type]
-        llm=LLMClient(LLMConfig.from_env()),
-        guard=GuardPolicy(max_result_rows=int(os.environ.get("DA_MAX_ROWS", "1000"))),
-        playbooks=playbooks,
-        breaker=CircuitBreaker(),
-        quota=RateQuota(),
-    )
+    llm = LLMClient(LLMConfig.from_env())
+    guard = GuardPolicy(max_result_rows=int(os.environ.get("DA_MAX_ROWS", "1000")))
+
+    def agent_factory(conn) -> DataAnalystAgent:
+        """换源重建 agent：语义层/审计/LLM/护栏保留，仅连接器不同（3.2 产品化）。"""
+        return DataAnalystAgent(
+            connector=conn,
+            semantic_store=semantic_store,
+            audit_sink=audit,  # type: ignore[arg-type]
+            llm=llm,
+            guard=guard,
+            playbooks=playbooks,
+            breaker=CircuitBreaker(),
+            quota=RateQuota(),
+        )
+
+    from da_connectors.dataset import DatasetStore
+
     state = AppState(
-        agent=agent,
+        agent=agent_factory(connector),
         controller=None,  # type: ignore[arg-type]
         audit=audit,  # type: ignore[arg-type]
         confirmations=ConfirmationQueue(semantic_store),
+        datasets=DatasetStore(os.environ.get("DA_DATASET_DB", "examples/datasets.db")),
     )
+    state.agent_factory = agent_factory
+    state.sources["default"] = connector
+    state.active_source = "default"
 
     # 演示模式：默认 sqlite 场景库时播种语义层 + 授权演示用户（生产配置下不生效）
     if connector_spec == "sqlite:examples/cx.db":
