@@ -36,13 +36,15 @@ async def bootstrap_semantic_layer(
     identity: UserIdentity,
     window: TimeWindow,
     actor: str = "bootstrap",
+    scope: MetadataScope | None = None,
 ) -> BootstrapReport:
+    """scope 限定集成范围（运营端勾选表的快速集成）；None = 全库。"""
     # 信号一：查询日志
     history = [hq async for hq in connector.get_query_history(window)]
     mining = mine_query_log(history, connector.dialect)
 
     # 信号三：schema profiling
-    catalog = await connector.get_metadata(MetadataScope())
+    catalog = await connector.get_metadata(scope or MetadataScope())
     profiles = await profile_catalog(
         connector, catalog, identity, GuardPolicy(max_result_rows=500)
     )

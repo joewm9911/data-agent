@@ -154,17 +154,58 @@ CONSOLE_HTML = """<!doctype html>
     </div>
     <h2>数据源列表</h2>
     <table><thead><tr><th>ID</th><th>类型</th><th>状态</th>
-      <th style="width:340px">操作</th></tr></thead>
+      <th style="width:400px">操作</th></tr></thead>
     <tbody id="srcRows"></tbody></table>
+
+    <div id="metaBrowser" style="display:none;margin-top:22px">
+      <h2>元数据浏览 · <span id="metaSrcId"></span></h2>
+      <p class="sub">勾选要集成的表 → 系统 profiling + 证据图归一 → 产出语义层草稿与确认题</p>
+      <div class="toolbar">
+        <button class="primary" onclick="integrateTables()">集成所选表到语义层</button>
+        <button onclick="$('metaBrowser').style.display='none'">关闭</button>
+      </div>
+      <table><thead><tr><th style="width:36px"></th><th>表</th><th>行数</th>
+        <th>列结构</th></tr></thead>
+      <tbody id="metaRows"></tbody></table>
+    </div>
   </section>
 
   <section id="semantic">
-    <h2>指标口径</h2>
-    <table><thead><tr><th>指标</th><th>口径定义</th><th>表达式</th><th>状态</th></tr></thead>
+    <h2>指标口径管理</h2>
+    <div class="form" id="metricForm">
+      <input id="mName" placeholder="指标名" size="10">
+      <input id="mDef" placeholder="业务口径定义（回答中的口径声明）" size="34">
+      <input id="mExpr" placeholder="SQL 表达式" size="30">
+      <input id="mGrain" placeholder="维度，如 day,chan" size="12">
+      <label><input type="checkbox" id="mVerified"> 已确认</label>
+      <label><input type="checkbox" id="mRestricted"> 受限</label>
+      <button class="primary" onclick="saveMetric()">保存指标</button>
+      <span class="hint">保存即产生新版本（append-only，历史可溯）</span>
+    </div>
+    <table><thead><tr><th>指标</th><th>口径定义</th><th>表达式</th><th>状态</th>
+      <th style="width:170px">操作</th></tr></thead>
     <tbody id="metricRows"></tbody></table>
-    <h2 style="margin-top:22px">业务实体</h2>
-    <table><thead><tr><th>实体</th><th>别名</th><th>物理绑定</th><th>关联路径</th></tr></thead>
+
+    <h2 style="margin-top:22px">业务实体管理</h2>
+    <table><thead><tr><th>实体</th><th>别名</th><th>物理绑定</th><th>关联路径</th>
+      <th style="width:210px">操作</th></tr></thead>
     <tbody id="entityRows"></tbody></table>
+    <div id="entityEditor" style="display:none;margin-top:14px">
+      <h2>编辑实体 · <span id="eName"></span></h2>
+      <textarea id="eJson" rows="12" style="width:100%;background:var(--panel2);
+        color:var(--text);border:1px solid var(--border);border-radius:6px;
+        padding:10px;font-family:ui-monospace,Menlo,monospace;font-size:12px">
+      </textarea>
+      <div class="toolbar" style="margin-top:10px">
+        <button class="primary" onclick="saveEntity()">保存实体</button>
+        <button onclick="$('entityEditor').style.display='none'">取消</button>
+      </div>
+    </div>
+    <div id="historyPanel" style="display:none;margin-top:14px">
+      <h2>版本历史 · <span id="hName"></span></h2>
+      <table><thead><tr><th>版本</th><th>修改人</th><th>时间</th><th>内容</th></tr></thead>
+      <tbody id="historyRows"></tbody></table>
+    </div>
   </section>
 
   <section id="confirm">
@@ -278,12 +319,41 @@ async function loadSources(){
       :'<span class="badge b-dim">已接入</span>';
     return '<tr><td><b>'+s.source_id+'</b></td><td>'+s.kind+'</td><td>'+status+
       '</td><td>'+
+      '<button onclick="browseMetadata(\\''+s.source_id+'\\')">元数据</button> '+
       '<button onclick="testSource(\\''+s.source_id+'\\')">集成测试</button> '+
       (s.active?'':'<button onclick="activateSource(\\''+s.source_id+
         '\\')">激活</button> ')+
       '<button onclick="bootstrapSource(this,\\''+s.source_id+
-        '\\')">冷启动语义层</button></td></tr>';
+        '\\')">全库冷启动</button></td></tr>';
   }).join('')||'<tr><td colspan="4" class="empty">尚未接入数据源</td></tr>';
+}
+let metaSource='';
+async function browseMetadata(id){
+  const r=await fetch('/admin/sources/'+id+'/metadata',{headers:H()});
+  if(!r.ok){ toast('✗ 拉取元数据失败：'+r.status,false); return; }
+  const d=await r.json(); metaSource=id;
+  $('metaSrcId').textContent=id;
+  $('metaRows').innerHTML=d.tables.map(t=>
+    '<tr><td><input type="checkbox" class="metaSel" value="'+t.name+'"></td>'+
+    '<td><b>'+t.name+'</b><br><small style="color:var(--muted)">'+t.database+
+    '</small></td><td>'+(t.row_count==null?'—':t.row_count.toLocaleString())+
+    '</td><td><details><summary>'+t.columns.length+' 列</summary>'+
+    '<div class="mono">'+t.columns.map(c=>c.name+'  '+c.type+
+      (c.comment?('  -- '+c.comment):'')).join('\\n')+'</div></details></td></tr>'
+  ).join('')||'<tr><td colspan="4" class="empty">无表</td></tr>';
+  $('metaBrowser').style.display='block';
+  $('metaBrowser').scrollIntoView({behavior:'smooth'});
+}
+async function integrateTables(){
+  const tables=[...document.querySelectorAll('.metaSel:checked')].map(i=>i.value);
+  if(!tables.length){ toast('请勾选至少一张表', false); return; }
+  const r=await fetch('/admin/sources/'+metaSource+'/integrate',
+    {method:'POST',headers:H(),body:JSON.stringify({tables})});
+  const d=await r.json();
+  if(!r.ok){ toast('✗ '+(d.detail||r.status), false); return; }
+  toast('✓ 集成完成\\n实体草稿 '+d.entities_created.length+' 个 · 指标草稿 '+
+    d.metrics_drafted.length+' 个\\n确认队列 +'+d.confirmations_queued+
+    ' · profiling '+d.profiled_columns+' 列\\n→ 去语义层/确认队列查看归一结果');
 }
 async function testSource(id){
   const r=await(await fetch('/admin/sources/'+id+'/test',
@@ -314,21 +384,93 @@ async function uploadDataset(){
   loadSources();
 }
 
+let metricCache={}, entityCache={};
 async function loadSemantic(){
-  const d=await(await fetch('/admin/semantic/export',{headers:H()})).json();
-  const L=d.semantic_layer;
-  $('metricRows').innerHTML=L.metrics.map(m=>
-    '<tr><td><b>'+m.name+'</b></td><td>'+(m.description||'—')+
-    '</td><td class="mono">'+(m.expr||'')+'</td><td>'+
-    (m.meta.verified?'<span class="badge b-ok">✓ 已确认</span>'
-      :'<span class="badge b-warn">草稿</span>')+
-    (m.meta.restricted?' <span class="badge b-err">受限</span>':'')+
-    '</td></tr>').join('')||'<tr><td colspan="4" class="empty">暂无指标</td></tr>';
-  $('entityRows').innerHTML=L.entities.map(e=>
-    '<tr><td><b>'+e.name+'</b></td><td>'+(e.aliases.join(' / ')||'—')+
-    '</td><td class="mono">'+e.bindings.map(b=>b.table+'.'+b.column).join('\\n')+
-    '</td><td class="mono">'+e.joins.map(j=>j.sql_on).join('\\n')+
-    '</td></tr>').join('')||'<tr><td colspan="4" class="empty">暂无实体</td></tr>';
+  const metrics=await(await fetch('/admin/semantic/objects?kind=metric',
+    {headers:H()})).json();
+  const entities=await(await fetch('/admin/semantic/objects?kind=entity',
+    {headers:H()})).json();
+  metricCache={}; entityCache={};
+  $('metricRows').innerHTML=metrics.map(m=>{
+    metricCache[m.name]=m; const p=m.payload;
+    return '<tr><td><b>'+m.name+'</b><br><small style="color:var(--muted)">v'+
+      m.version+' · '+m.updated_by+'</small></td><td>'+(p.definition||'—')+
+      '</td><td class="mono">'+(p.expr||'')+'</td><td>'+
+      (p.verified?'<span class="badge b-ok">✓ 已确认</span>'
+        :'<span class="badge b-warn">草稿</span>')+
+      (p.restricted?' <span class="badge b-err">受限</span>':'')+'</td><td>'+
+      '<button onclick="editMetric(\\''+m.name+'\\')">编辑</button> '+
+      (p.verified?'':'<button onclick="verifyMetric(\\''+m.name+
+        '\\')">确认</button> ')+
+      '<button onclick="showHistory(\\'metric\\',\\''+m.name+'\\')">历史</button>'+
+      '</td></tr>';
+  }).join('')||'<tr><td colspan="5" class="empty">暂无指标，可在上方表单新建</td></tr>';
+  $('entityRows').innerHTML=entities.map(e=>{
+    entityCache[e.name]=e; const p=e.payload;
+    return '<tr><td><b>'+e.name+'</b><br><small style="color:var(--muted)">v'+
+      e.version+'</small></td><td>'+((p.aliases||[]).join(' / ')||'—')+
+      '</td><td class="mono">'+(p.bindings||[]).map(b=>b.table+'.'+b.column)
+        .join('\\n')+
+      '</td><td class="mono">'+(p.join_paths||[]).map(j=>j.expr).join('\\n')+
+      '</td><td>'+
+      '<button onclick="editEntity(\\''+e.name+'\\')">编辑</button> '+
+      '<button onclick="showHistory(\\'entity\\',\\''+e.name+'\\')">历史</button>'+
+      '</td></tr>';
+  }).join('')||'<tr><td colspan="5" class="empty">暂无实体（可经数据源集成产出）</td></tr>';
+}
+function editMetric(name){
+  const p=metricCache[name].payload;
+  $('mName').value=name; $('mDef').value=p.definition||'';
+  $('mExpr').value=p.expr||''; $('mGrain').value=(p.grain||[]).join(',');
+  $('mVerified').checked=!!p.verified; $('mRestricted').checked=!!p.restricted;
+  $('metricForm').scrollIntoView({behavior:'smooth'});
+}
+async function saveMetric(){
+  const name=$('mName').value.trim();
+  if(!name){ toast('指标名不能为空', false); return; }
+  const body={definition:$('mDef').value, expr:$('mExpr').value,
+    grain:$('mGrain').value.split(',').map(s=>s.trim()).filter(Boolean),
+    verified:$('mVerified').checked, restricted:$('mRestricted').checked};
+  const r=await fetch('/admin/semantic/metrics/'+encodeURIComponent(name),
+    {method:'PUT',headers:H(),body:JSON.stringify(body)});
+  const d=await r.json();
+  toast(r.ok?('✓ 已保存 '+name+'（v'+d.version+'）'):('✗ '+(d.detail||r.status)),r.ok);
+  loadSemantic();
+}
+async function verifyMetric(name){
+  const p={...metricCache[name].payload, verified:true};
+  await fetch('/admin/semantic/metrics/'+encodeURIComponent(name),
+    {method:'PUT',headers:H(),body:JSON.stringify(p)});
+  toast('✓ '+name+' 已标记为确认口径'); loadSemantic();
+}
+function editEntity(name){
+  $('eName').textContent=name;
+  $('eJson').value=JSON.stringify(entityCache[name].payload, null, 2);
+  $('entityEditor').style.display='block';
+  $('entityEditor').scrollIntoView({behavior:'smooth'});
+}
+async function saveEntity(){
+  let payload;
+  try{ payload=JSON.parse($('eJson').value); }
+  catch(e){ toast('JSON 不合法：'+e.message, false); return; }
+  const name=$('eName').textContent;
+  const r=await fetch('/admin/semantic/entities/'+encodeURIComponent(name),
+    {method:'PUT',headers:H(),body:JSON.stringify(payload)});
+  const d=await r.json();
+  toast(r.ok?('✓ 已保存 '+name+'（v'+d.version+'）'):('✗ '+(d.detail||r.status)),r.ok);
+  if(r.ok){ $('entityEditor').style.display='none'; loadSemantic(); }
+}
+async function showHistory(kind,name){
+  const rows=await(await fetch('/admin/semantic/history?kind='+kind+
+    '&name='+encodeURIComponent(name),{headers:H()})).json();
+  $('hName').textContent=name;
+  $('historyRows').innerHTML=rows.reverse().map(r=>
+    '<tr><td>v'+r.version+'</td><td>'+r.updated_by+'</td><td class="mono">'+
+    r.updated_at.slice(0,19)+'</td><td><details><summary>查看</summary>'+
+    '<div class="mono">'+JSON.stringify(r.payload,null,2).replace(/</g,'&lt;')+
+    '</div></details></td></tr>').join('');
+  $('historyPanel').style.display='block';
+  $('historyPanel').scrollIntoView({behavior:'smooth'});
 }
 
 async function loadConfirm(){

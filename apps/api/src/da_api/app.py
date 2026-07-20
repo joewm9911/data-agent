@@ -112,6 +112,10 @@ class SourceRequest(BaseModel):
     config: dict = {}
 
 
+class IntegrateRequest(BaseModel):
+    tables: list[str] = []
+
+
 def create_app(state: AppState) -> FastAPI:
     app = FastAPI(title="data-agent", version="0.2.0")
 
@@ -387,16 +391,17 @@ def create_app(state: AppState) -> FastAPI:
         state.active_source = source_id
         return {"active_source": source_id}
 
-    @app.post("/admin/sources/{source_id}/bootstrap")
-    async def bootstrap_source(
-        source_id: str, identity: UserIdentity = Depends(get_identity)
-    ):
-        """一键冷启动（第 1 天 SOP，4.2）：挖掘+profiling → 语义草稿+确认队列。"""
+    async def _run_bootstrap(
+        source_id: str, identity: UserIdentity, tables: list[str] | None
+    ) -> dict:
         connector = state.sources.get(source_id)
         if connector is None:
             raise HTTPException(404, "source not found")
         graph = EvidenceGraph()
         queue = ConfirmationQueue(state.agent._semantics, graph)  # noqa: SLF001
+        # 保留旧队列中未处理的确认项（集成是增量动作，不清空待办）
+        for item in state.confirmations.pending():
+            queue._items[item.item_id] = item  # noqa: SLF001
         state.confirmations = queue
         window = TimeWindow(
             start=datetime.now(UTC) - timedelta(days=180), end=datetime.now(UTC)
@@ -405,7 +410,8 @@ def create_app(state: AppState) -> FastAPI:
             update={"claims": {**identity.claims, "allowed_databases": "main,default"}}
         )
         report = await bootstrap_semantic_layer(
-            connector, state.agent._semantics, queue, boot_identity, window  # noqa: SLF001
+            connector, state.agent._semantics, queue, boot_identity, window,  # noqa: SLF001
+            scope=MetadataScope(tables=tables or []),
         )
         return {
             "queries_mined": report.mining.parsed_queries,
@@ -414,6 +420,94 @@ def create_app(state: AppState) -> FastAPI:
             "confirmations_queued": report.confirmations_queued,
             "profiled_columns": len(report.profiles),
         }
+
+    @app.post("/admin/sources/{source_id}/bootstrap")
+    async def bootstrap_source(
+        source_id: str, identity: UserIdentity = Depends(get_identity)
+    ):
+        """一键冷启动（第 1 天 SOP，4.2）：全库挖掘+profiling → 语义草稿+确认队列。"""
+        return await _run_bootstrap(source_id, identity, tables=None)
+
+    @app.get("/admin/sources/{source_id}/metadata")
+    async def source_metadata(source_id: str):
+        """元数据浏览器：拉取表/列结构供运营端勾选集成。"""
+        connector = state.sources.get(source_id)
+        if connector is None:
+            raise HTTPException(404, "source not found")
+        catalog = await connector.get_metadata(MetadataScope())
+        return {
+            "source_id": source_id,
+            "tables": [
+                {"name": t.name, "database": t.database, "row_count": t.row_count,
+                 "columns": [{"name": c.name, "type": c.type, "comment": c.comment}
+                             for c in t.columns]}
+                for t in catalog.tables
+            ],
+        }
+
+    @app.post("/admin/sources/{source_id}/integrate")
+    async def integrate_source(
+        source_id: str, body: IntegrateRequest,
+        identity: UserIdentity = Depends(get_identity),
+    ):
+        """快速数据集成：勾选表 → profiling+证据图归一 → 语义层草稿+确认队列（4.2/4.3）。"""
+        if not body.tables:
+            raise HTTPException(400, "至少选择一张表")
+        return await _run_bootstrap(source_id, identity, tables=body.tables)
+
+    # ---- 语义层管理（运营端 CRUD，全部版本化写入）----
+
+    @app.get("/admin/semantic/objects")
+    async def semantic_objects(kind: str = "metric"):
+        semantics = state.agent._semantics  # noqa: SLF001
+        out = []
+        for name in await semantics.list_names(kind):  # type: ignore[arg-type]
+            record = await semantics.get(kind, name)  # type: ignore[arg-type]
+            if record is not None:
+                out.append({"name": name, "version": record.version,
+                            "updated_by": record.updated_by,
+                            "updated_at": str(record.updated_at),
+                            "payload": record.payload})
+        return out
+
+    @app.get("/admin/semantic/history")
+    async def semantic_history(kind: str, name: str):
+        semantics = state.agent._semantics  # noqa: SLF001
+        return [
+            {"version": r.version, "updated_by": r.updated_by,
+             "updated_at": str(r.updated_at), "payload": r.payload}
+            for r in await semantics.history(kind, name)  # type: ignore[arg-type]
+        ]
+
+    @app.put("/admin/semantic/metrics/{name}")
+    async def put_metric(
+        name: str, body: dict, identity: UserIdentity = Depends(get_identity)
+    ):
+        from da_semantic import Metric
+
+        try:
+            metric = Metric.model_validate({**body, "name": name})
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(400, f"指标定义不合法: {e}") from e
+        record = await state.agent._semantics.put(  # noqa: SLF001
+            "metric", name, metric.model_dump(), identity.user_id
+        )
+        return {"name": name, "version": record.version}
+
+    @app.put("/admin/semantic/entities/{name}")
+    async def put_entity(
+        name: str, body: dict, identity: UserIdentity = Depends(get_identity)
+    ):
+        from da_semantic import Entity
+
+        try:
+            entity = Entity.model_validate({**body, "name": name})
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(400, f"实体定义不合法: {e}") from e
+        record = await state.agent._semantics.put(  # noqa: SLF001
+            "entity", name, entity.model_dump(), identity.user_id
+        )
+        return {"name": name, "version": record.version}
 
     @app.post("/admin/datasets/upload")
     async def upload_dataset(file: UploadFile):
