@@ -1,0 +1,20 @@
+[project]
+name = "da-connectors"
+version = "0.1.0"
+description = "接入层：Connector 抽象接口 + 各适配器（架构文档 3）"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.7", "da-types", "da-governance"]
+
+[project.optional-dependencies]
+clickhouse = ["clickhouse-connect>=0.8"]
+
+[tool.uv.sources]
+da-types = { workspace = true }
+da-governance = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/da_connectors"]

@@ -1,0 +1,61 @@
+[project]
+name = "data-agent"
+version = "0.1.0"
+description = "企业数据分析 Agent — monorepo 根"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "import-linter>=2.0",
+    "da-types",
+    "da-platform",
+    "da-governance",
+    "da-connectors",
+    "da-semantic",
+    "da-runtime",
+    "da-evals",
+]
+
+[tool.uv.sources]
+da-types = { workspace = true }
+da-platform = { workspace = true }
+da-governance = { workspace = true }
+da-connectors = { workspace = true }
+da-semantic = { workspace = true }
+da-runtime = { workspace = true }
+da-evals = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+# 架构依赖方向强制（docs/architecture-design.md 第 2 章）：
+# runtime → semantic → connectors → (governance, platform, types)
+[tool.importlinter]
+root_packages = ["da_types", "da_platform", "da_governance", "da_connectors", "da_semantic", "da_runtime"]
+
+[[tool.importlinter.contracts]]
+name = "分层单向依赖"
+type = "layers"
+layers = [
+    "da_runtime",
+    "da_semantic",
+    "da_connectors",
+    "da_governance",
+    "da_platform",
+    "da_types",
+]

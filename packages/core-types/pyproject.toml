@@ -1,0 +1,13 @@
+[project]
+name = "da-types"
+version = "0.1.0"
+description = "跨模块共享契约类型（架构文档 11.2：模块间只经 core-types 通信）"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.7"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/da_types"]
