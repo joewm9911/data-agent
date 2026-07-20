@@ -3,10 +3,11 @@ name = "da-governance"
 version = "0.1.0"
 description = "治理平面：查询护栏 + 全链路审计（架构文档 3.4 / 6 / 8）"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2.7", "sqlglot>=25.0", "da-types"]
+dependencies = ["pydantic>=2.7", "sqlglot>=25.0", "da-types", "da-platform"]
 
 [tool.uv.sources]
 da-types = { workspace = true }
+da-platform = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -39,6 +39,16 @@ uv run lint-imports  # 架构依赖方向检查（分层单向依赖）
 
 ## 当前阶段
 
-架构文档 M0–M3 的产品特性已全部落码并有测试覆盖（60+ 用例，含 golden 对照与 live LLM e2e）。
-生产化基础设施（Postgres/Redis/S3 provider、K8s 会话容器、SSO、Web 前端）走 platform 抽象层，
-当前为内存/单机实现，接口即契约。运行演示：`uv run python examples/demo_cx.py`（需 `.env` 配置 LLM key）。
+架构文档特性全量落码，97 项测试（含真实 Postgres/Redis provider 测试与 live LLM e2e）：
+
+- **持久化**：Postgres 语义层/审计存储（DDL 在源码）、Redis lease/queue/pubsub、文件系统 BlobStore
+- **交付**：SSE 流式对话、Bearer 鉴权（IdentityProvider）、内嵌 Web 前端（`GET /`）、SVG 图表、
+  定时晨报调度器、IM webhook（飞书/钉钉/企微/Slack）
+- **语义飞轮**：查询日志挖掘、证据图归一、LLM 语义增强（列描述/枚举含义/文档挖掘，MiniMax）、
+  verified answers 模糊召回（数字守卫）、schema 漂移冻结、指标树自动草稿
+- **治理**：熔断/租户配额、差分审计检测、最小聚合 HAVING、注入中和、全链路审计
+- **归因**：维度分解 + 乘法因子分解 + 递归下钻，playbook 与归因引擎均为 LLM 可调用工具
+- **运行时**：回合检查点、心跳自动续租、会话休眠/水合、token 成本统计
+- **部署**：`deploy/` docker-compose（单机 all-in-one）+ K8s manifests + Dockerfile
+
+启动：`uv run uvicorn da_api.main:app`（需 `.env`）；演示：`uv run python examples/demo_cx.py`。

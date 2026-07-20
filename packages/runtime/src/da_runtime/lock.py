@@ -21,6 +21,10 @@ class SessionTurnLock:
         self._leases = leases
         self._ttl = ttl_seconds
 
+    @property
+    def ttl_seconds(self) -> float:
+        return self._ttl
+
     @asynccontextmanager
     async def hold(self, session_id: str, holder: str) -> AsyncIterator[Lease]:
         """持有会话锁执行一个回合。yield 的 Lease.token 即写回用 fencing token。"""

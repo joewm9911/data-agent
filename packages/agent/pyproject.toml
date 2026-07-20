@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.7",
     "anthropic>=0.40",
+    "httpx>=0.27",
     "da-types",
     "da-governance",
     "da-connectors",

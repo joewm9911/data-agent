@@ -7,12 +7,19 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from typing import Any
 
 from da_connectors.base import Connector, ConnectorError, GuardRejectedError
 from da_governance import AuditEvent, AuditSink, referenced_objects, sanitize_result_text
-from da_semantic import SemanticStore
+from da_governance.breaker import (
+    CircuitBreaker,
+    CircuitOpenError,
+    QuotaExceededError,
+    RateQuota,
+)
+from da_semantic import LearningLoop, SemanticStore
 from da_types import (
     CatalogSnapshot,
     DataObject,
@@ -23,9 +30,11 @@ from da_types import (
 )
 from pydantic import BaseModel, Field
 
+from da_agent.charts import render_chart
 from da_agent.context import build_system_prompt
-from da_agent.llm import LLMClient
+from da_agent.llm import LLMClient, OnToken, UsageCounter
 from da_agent.metric_tree import MetricNode, MetricTreeEngine
+from da_agent.playbooks import PlaybookEngine, PlaybookRegistry
 
 RUN_SQL_TOOL = {
     "name": "run_sql",
@@ -59,6 +68,22 @@ ATTRIBUTION_TOOL = {
     },
 }
 
+PLAYBOOK_TOOL = {
+    "name": "run_playbook",
+    "description": (
+        "执行预置分析套路（playbook）：固定步骤+解读框架，输出质量稳定。"
+        "问题匹配某个 playbook 场景时优先使用。"
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "playbook": {"type": "string", "description": "playbook 名称"},
+            "params": {"type": "object", "description": "参数（日期等），字符串值"},
+        },
+        "required": ["playbook"],
+    },
+}
+
 MAX_STEPS = 10
 MAX_RESULT_CHARS = 4000  # 数据最小化（6.2-4）：大结果集截断后回流模型
 
@@ -80,6 +105,12 @@ class Answer(BaseModel):
     turn_id: str
     # 可持久化转录（会话连续性，7.2）：下一回合作为 history 传回
     transcript: list[dict] = Field(default_factory=list)
+    # token 成本统计（8.2）
+    input_tokens: int = 0
+    output_tokens: int = 0
+    llm_calls: int = 0
+    # 自动生成的 SVG 图表（5.1 四件套之"图"）
+    charts: list[str] = Field(default_factory=list)
 
 
 class DataAnalystAgent:
@@ -91,6 +122,10 @@ class DataAnalystAgent:
         llm: LLMClient,
         guard: GuardPolicy | None = None,
         metric_trees: dict[str, MetricNode] | None = None,
+        playbooks: PlaybookRegistry | None = None,
+        learning: LearningLoop | None = None,
+        breaker: CircuitBreaker | None = None,
+        quota: RateQuota | None = None,
     ) -> None:
         self._connector = connector
         self._semantics = semantic_store
@@ -98,6 +133,11 @@ class DataAnalystAgent:
         self._llm = llm
         self._guard = guard or GuardPolicy()
         self._metric_trees = metric_trees or {}
+        self._playbooks = playbooks
+        self._playbook_engine = PlaybookEngine(connector, self._guard)
+        self._learning = learning
+        self._breaker = breaker
+        self._quota = quota
         self._attribution = MetricTreeEngine(connector, self._guard)
         self._catalog: CatalogSnapshot | None = None
 
@@ -112,6 +152,14 @@ class DataAnalystAgent:
             tool = dict(ATTRIBUTION_TOOL)
             tool["description"] += f" 已注册指标树：{sorted(self._metric_trees)}"
             tools.append(tool)
+        if self._playbooks is not None and self._playbooks.names():
+            tool = dict(PLAYBOOK_TOOL)
+            specs = [
+                f"{n}(参数:{','.join(self._playbooks.get(n).params)})"
+                for n in self._playbooks.names()
+            ]
+            tool["description"] += f" 可用：{specs}"
+            tools.append(tool)
         return tools
 
     async def ask(
@@ -120,9 +168,12 @@ class DataAnalystAgent:
         identity: UserIdentity,
         session_id: str | None = None,
         history: list[dict] | None = None,
+        on_token: OnToken | None = None,
+        on_checkpoint=None,  # Callable[[list[dict]], Awaitable[None]]：每个工具轮后调用
     ) -> Answer:
         session_id = session_id or uuid.uuid4().hex
         turn_id = uuid.uuid4().hex
+        usage = UsageCounter()
 
         async def audit(stage: str, payload: dict[str, Any]) -> None:
             await self.audit_sink.append(
@@ -143,16 +194,42 @@ class DataAnalystAgent:
             self._connector, self._semantics, catalog, identity
         )
         messages: list[dict[str, Any]] = list(history or [])
-        messages.append({"role": "user", "content": question})
         executed: list[ExecutedSQL] = []
+        charts: list[str] = []
+
+        # verified answer 命中（4.5/6.1）：复用 SQL 模板，以提问者身份重执行
+        user_content = question
+        if self._learning is not None:
+            hit = await self._learning.find_verified_answer(question)
+            if hit is not None and not hit.restricted:
+                record, result_text, _ = await self._run_sql(
+                    hit.sql_template, "verified answer 模板重执行", identity, audit
+                )
+                if record.ok:
+                    executed.append(record)
+                    user_content = (
+                        f"{question}\n\n[系统提示] 该问题命中已验证答案"
+                        f"（verified by {hit.verified_by}），已以当前用户身份重新执行模板：\n"
+                        f"SQL: {hit.sql_template}\n结果:\n{result_text}\n"
+                        f"请基于此结果作答并声明口径；如结果不适用可另行查询。"
+                    )
+        messages.append({"role": "user", "content": user_content})
 
         for step in range(1, MAX_STEPS + 1):
-            response = await self._llm.create(system, messages, tools=self._tools())
+            response = await self._llm.create(
+                system, messages, tools=self._tools(), on_token=on_token, usage=usage
+            )
             tool_calls = [b for b in response.content if b.type == "tool_use"]
 
             if not tool_calls:
                 text = "".join(b.text for b in response.content if b.type == "text")
-                await audit("presentation", {"text": text, "steps": step})
+                await audit(
+                    "presentation",
+                    {"text": text, "steps": step,
+                     "usage": {"input_tokens": usage.input_tokens,
+                               "output_tokens": usage.output_tokens,
+                               "llm_calls": usage.llm_calls}},
+                )
                 messages.append({"role": "assistant", "content": response.content})
                 return Answer(
                     question=question,
@@ -162,6 +239,10 @@ class DataAnalystAgent:
                     session_id=session_id,
                     turn_id=turn_id,
                     transcript=_serialize_messages(messages),
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    llm_calls=usage.llm_calls,
+                    charts=charts,
                 )
 
             messages.append({"role": "assistant", "content": response.content})
@@ -171,15 +252,21 @@ class DataAnalystAgent:
                     record, result_text = await self._run_attribution(
                         call.input, identity, audit
                     )
+                elif call.name == "run_playbook":
+                    record, result_text = await self._run_playbook(
+                        call.input, identity, audit
+                    )
                 else:
                     statement = call.input.get("statement", "")
                     purpose = call.input.get("purpose", "")
                     await audit(
                         "generation", {"statement": statement, "purpose": purpose}
                     )
-                    record, result_text = await self._run_sql(
+                    record, result_text, chart = await self._run_sql(
                         statement, purpose, identity, audit
                     )
+                    if chart is not None:
+                        charts.append(chart)
                 executed.append(record)
                 tool_results.append(
                     {
@@ -190,6 +277,8 @@ class DataAnalystAgent:
                     }
                 )
             messages.append({"role": "user", "content": tool_results})
+            if on_checkpoint is not None:
+                await on_checkpoint(_serialize_messages(messages))
 
         text = "分析步骤超出上限，已中止。已执行的查询见审计记录。"
         await audit("presentation", {"text": text, "steps": MAX_STEPS, "aborted": True})
@@ -201,6 +290,10 @@ class DataAnalystAgent:
             session_id=session_id,
             turn_id=turn_id,
             transcript=_serialize_messages(messages),
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            llm_calls=usage.llm_calls,
+            charts=charts,
         )
 
     async def _run_attribution(
@@ -237,9 +330,43 @@ class DataAnalystAgent:
         )
         return record, report.narrative()
 
+    async def _run_playbook(
+        self, args: dict[str, Any], identity: UserIdentity, audit
+    ) -> tuple[ExecutedSQL, str]:
+        name = args.get("playbook", "")
+        label = f"playbook:{name}"
+        if self._playbooks is None or name not in self._playbooks.names():
+            available = self._playbooks.names() if self._playbooks else []
+            record = ExecutedSQL(statement=label, ok=False, error="unknown playbook")
+            return record, f"未注册的 playbook: {name}，可用：{available}"
+        await audit("generation", {"playbook": name, "params": args.get("params", {})})
+        try:
+            run = await self._playbook_engine.run(
+                self._playbooks.get(name), dict(args.get("params") or {}), identity
+            )
+        except (ConnectorError, ValueError) as e:
+            record = ExecutedSQL(statement=label, ok=False, error=str(e))
+            return record, f"playbook 执行失败：{e}"
+        await audit("execution", {"playbook": name, "ok": True,
+                                  "steps": len(run.results)})
+        record = ExecutedSQL(statement=label, purpose="playbook", ok=True,
+                             row_count=len(run.results))
+        return record, run.narrative()
+
     async def _run_sql(
         self, statement: str, purpose: str, identity: UserIdentity, audit
-    ) -> tuple[ExecutedSQL, str]:
+    ) -> tuple[ExecutedSQL, str, str | None]:
+        # 熔断与配额（3.4）：先于一切执行
+        try:
+            if self._quota is not None:
+                self._quota.check(identity.tenant_id)
+            if self._breaker is not None:
+                self._breaker.check()
+        except (CircuitOpenError, QuotaExceededError) as e:
+            await audit("guard", {"statement": statement, "allowed": False, "reason": str(e)})
+            record = ExecutedSQL(statement=statement, purpose=purpose, ok=False, error=str(e))
+            return record, f"查询被限流保护拒绝：{e}", None
+
         # 执行前权限判定（6.1）：引用对象逐一 check_access，任一无权即拒绝。
         # 拒绝话术不泄露对象存在性（"没有找到相关数据"而非"你无权访问 X"）。
         objects = referenced_objects(statement, self._connector.dialect)
@@ -255,7 +382,9 @@ class DataAnalystAgent:
                 record = ExecutedSQL(
                     statement=statement, purpose=purpose, ok=False, error="access denied"
                 )
-                return record, "没有找到相关数据。请确认所需数据在你的可用范围内。"
+                return record, "没有找到相关数据。请确认所需数据在你的可用范围内。", None
+
+        started = time.monotonic()
         try:
             result = await self._connector.execute(
                 Query(statement=statement, dialect=self._connector.dialect),
@@ -265,16 +394,23 @@ class DataAnalystAgent:
         except GuardRejectedError as e:
             await audit("guard", {"statement": statement, "allowed": False, "reason": str(e)})
             record = ExecutedSQL(statement=statement, purpose=purpose, ok=False, error=str(e))
-            return record, f"查询被安全护栏拒绝：{e}。请改用只读的单条 SELECT。"
+            return record, f"查询被安全护栏拒绝：{e}。请改用只读的单条 SELECT。", None
         except ConnectorError as e:
+            if self._breaker is not None:
+                self._breaker.record(ok=False)
             await audit("execution", {"statement": statement, "ok": False, "error": str(e)})
             record = ExecutedSQL(statement=statement, purpose=purpose, ok=False, error=str(e))
-            return record, f"查询执行失败：{e}。请检查表名/列名并修正 SQL。"
+            return record, f"查询执行失败：{e}。请检查表名/列名并修正 SQL。", None
+
+        duration_ms = (time.monotonic() - started) * 1000
+        if self._breaker is not None:
+            self._breaker.record(ok=True, duration_ms=duration_ms)
 
         await audit("guard", {"statement": statement, "allowed": True})
         await audit(
             "execution",
-            {"statement": statement, "ok": True, "rows": len(result.rows)},
+            {"statement": statement, "ok": True, "rows": len(result.rows),
+             "duration_ms": round(duration_ms, 1)},
         )
         header = ",".join(c.name for c in result.columns)
         body = "\n".join(",".join(str(v) for v in row) for row in result.rows)
@@ -286,7 +422,8 @@ class DataAnalystAgent:
         record = ExecutedSQL(
             statement=statement, purpose=purpose, ok=True, row_count=len(result.rows)
         )
-        return record, text
+        chart = render_chart(result, title=purpose or "查询结果")
+        return record, text, chart
 
 
 def _serialize_messages(messages: list[dict[str, Any]]) -> list[dict]:

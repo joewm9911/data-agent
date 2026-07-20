@@ -3,7 +3,12 @@ name = "da-platform"
 version = "0.1.0"
 description = "基础设施抽象层（架构文档 10.2）：最小原语接口 + 各 provider 实现"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2.7", "da-types"]
+dependencies = [
+    "pydantic>=2.7",
+    "psycopg[binary]>=3.2",
+    "redis>=5.0",
+    "da-types",
+]
 
 [tool.uv.sources]
 da-types = { workspace = true }

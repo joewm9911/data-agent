@@ -2,12 +2,15 @@
 
 - pull 模型：回合只进会话专属队列，worker 持租约消费（唯一消费者）
 - 转录 = 会话状态：每回合结束携 fencing token 增量写回 BlobStore
+- 长回合心跳自动续租（7.2 租约）；回合内检查点写 turns/{id}/checkpoint.json
 - controller：ensure（COLD→ACTIVE 水合）/ idle_sweep（IDLE→快照→销毁）
 - 主动任务 = kind="proactive" 的回合，同队列同链路（7.4）
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -67,6 +70,24 @@ class SessionRuntime:
     def _snapshot_key(self) -> str:
         return f"sessions/{self.meta.session_id}/transcript.json"
 
+    def _checkpoint_key(self, turn_id: str) -> str:
+        return f"sessions/{self.meta.session_id}/turns/{turn_id}/checkpoint.json"
+
+    def make_checkpointer(self, turn_id: str):
+        """回合内检查点（7.2）：agent 每个工具轮结束调用，崩溃损失上限=半个工具轮。"""
+
+        async def checkpoint(partial_transcript: list[dict]) -> None:
+            await self._blobs.put(
+                self._checkpoint_key(turn_id),
+                json.dumps(partial_transcript, ensure_ascii=False).encode(),
+            )
+
+        return checkpoint
+
+    async def load_checkpoint(self, turn_id: str) -> list[dict] | None:
+        data = await self._blobs.get(self._checkpoint_key(turn_id))
+        return json.loads(data) if data is not None else None
+
     async def hydrate(self) -> None:
         """WARMING：从 BlobStore 恢复转录（D4：文件内容跟会话走，不跟机器走）。"""
         data = await self._blobs.get(self._snapshot_key)
@@ -95,14 +116,34 @@ class SessionRuntime:
         try:
             async with self._lock.hold(self.meta.session_id, self._worker_id) as lease:
                 turn.status = "running"
-                answer_text, transcript = await self._executor(
-                    question=turn.input_text,
-                    identity=identity,
-                    session_id=self.meta.session_id,
-                    history=self.transcript,
-                )
+                # 心跳自动续租：长回合（归因/多步分析）超过 ttl 也不丢租约
+                current_lease = lease
+                stop = asyncio.Event()
+
+                async def heartbeat():
+                    nonlocal current_lease
+                    interval = max(self._lock.ttl_seconds * 0.4, 0.05)
+                    while not stop.is_set():
+                        with contextlib.suppress(asyncio.TimeoutError):
+                            await asyncio.wait_for(stop.wait(), timeout=interval)
+                        if stop.is_set():
+                            return
+                        current_lease = await self._lock.heartbeat(current_lease)
+
+                hb_task = asyncio.create_task(heartbeat())
+                try:
+                    answer_text, transcript = await self._executor(
+                        question=turn.input_text,
+                        identity=identity,
+                        session_id=self.meta.session_id,
+                        history=self.transcript,
+                    )
+                finally:
+                    stop.set()
+                    await hb_task
                 self.transcript = transcript
-                await self.snapshot(fencing_token=lease.token)
+                await self.snapshot(fencing_token=current_lease.token)
+                await self._blobs.delete(self._checkpoint_key(turn.turn_id))
                 turn.status = "completed"
                 self.last_active = datetime.now(UTC)
                 return TurnOutcome(turn=turn, answer_text=answer_text)

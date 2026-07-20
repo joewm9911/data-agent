@@ -23,9 +23,12 @@ class FakeAgent:
         self.audit_sink = InMemoryAuditSink()
         self.calls = 0
 
-    async def ask(self, question, identity, session_id=None, history=None):
+    async def ask(self, question, identity, session_id=None, history=None, on_token=None):
         self.calls += 1
         n = sum(1 for m in (history or []) if m.get("role") == "user") + 1
+        if on_token is not None:
+            for ch in "流式":
+                await on_token(ch)
         return Answer(
             question=question,
             text=f"[{identity.user_id}] 第{n}问的答案",

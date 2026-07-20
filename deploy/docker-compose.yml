@@ -1,0 +1,42 @@
+# 私有化-单机形态（10.2 四形态之一）：all-in-one，无需 K8s
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: data_agent
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:8
+    volumes: ["redisdata:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports: ["8000:8000"]
+    environment:
+      DA_PG_DSN: postgresql://postgres@postgres/data_agent
+      DA_REDIS_URL: redis://redis:6379/0
+      DA_BLOB_ROOT: /data/blobs
+      DA_LLM_API_KEY: ${DA_LLM_API_KEY}
+      DA_LLM_BASE_URL: ${DA_LLM_BASE_URL:-https://api.minimaxi.com/anthropic}
+      DA_LLM_MODEL: ${DA_LLM_MODEL:-MiniMax-M2}
+    volumes: ["blobdata:/data/blobs"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  redisdata:
+  blobdata:

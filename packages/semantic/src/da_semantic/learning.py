@@ -1,12 +1,21 @@
-"""学习回路（架构文档 4.5）：澄清即沉淀 / 纠正即训练 / 冲突显式化 / verified answers 生长。"""
+"""学习回路（架构文档 4.5）：澄清即沉淀 / 纠正即训练 / 冲突显式化 / verified answers 生长。
+
+verified answers 召回：n-gram 向量模糊匹配（"6月的GMV" 命中 "6月GMV是多少"），
+生产可换 embedding provider（同 VectorIndex 接口）。
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from da_platform.vector import NgramIndex, VectorIndex
+
 from da_semantic.model import CounterExample, VerifiedAnswer
 from da_semantic.store import SemanticStore
+
+# n-gram 特征下的经验阈值；升级 embedding provider 后应重标定
+SIMILARITY_THRESHOLD = 0.55
 
 
 @dataclass
@@ -18,8 +27,20 @@ class CaliberConflict:
 
 
 class LearningLoop:
-    def __init__(self, store: SemanticStore) -> None:
+    def __init__(self, store: SemanticStore, index: VectorIndex | None = None) -> None:
         self._store = store
+        self._index = index or NgramIndex()
+        self._index_loaded = False
+
+    async def _ensure_index(self) -> None:
+        """首次使用时从存储重建索引（进程重启后召回不丢，持久化在 store）。"""
+        if self._index_loaded:
+            return
+        for name in await self._store.list_names("verified_answer"):
+            record = await self._store.get("verified_answer", name)
+            if record is not None:
+                self._index.add(name, record.payload.get("question", ""))
+        self._index_loaded = True
 
     async def record_clarification(
         self, alias: str, entity_name: str, actor: str
@@ -69,16 +90,41 @@ class LearningLoop:
             verified_at=datetime.now(UTC),
             restricted=restricted,
         )
+        await self._ensure_index()
+        key = f"va:{hash(question) & 0xFFFFFFFF:08x}"
         await self._store.put(
-            "verified_answer", f"va:{hash(question) & 0xFFFFFFFF:08x}",
-            answer.model_dump(mode="json"), actor,
+            "verified_answer", key, answer.model_dump(mode="json"), actor
         )
+        self._index.add(key, question)
 
     async def find_verified_answer(self, question: str) -> VerifiedAnswer | None:
-        """M1 相似度：规范化精确匹配；M2 升级为 embedding 召回。"""
-        key = f"va:{hash(question) & 0xFFFFFFFF:08x}"
-        record = await self._store.get("verified_answer", key)
-        return VerifiedAnswer.model_validate(record.payload) if record else None
+        """向量模糊召回 + 数字令牌守卫。
+
+        相似度过阈值才命中（宁可不猜，铁律 P2）；问题中的数字（月份/年份/ID）
+        必须完全一致——"7月GMV"绝不能复用"6月GMV"的答案。
+        """
+        import re
+
+        await self._ensure_index()
+        query_numbers = set(re.findall(r"\d+", question))
+        for key, score in self._index.search(question, top_k=3):
+            if score < SIMILARITY_THRESHOLD:
+                break
+            record = await self._store.get("verified_answer", key)
+            if record is None:
+                continue
+            candidate_numbers = set(
+                re.findall(r"\d+", record.payload.get("question", ""))
+            )
+            # 子集规则：允许省略（"6月"命中"2026年6月"），拒绝冲突（"7月"≠"6月"）
+            compatible = (
+                query_numbers <= candidate_numbers
+                or candidate_numbers <= query_numbers
+            )
+            if not compatible:
+                continue
+            return VerifiedAnswer.model_validate(record.payload)
+        return None
 
     async def detect_conflicts(self) -> list[CaliberConflict]:
         """冲突显式化：同名指标的历史版本出现互异 expr 且都被 verified 过。"""

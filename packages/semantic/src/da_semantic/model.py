@@ -52,6 +52,8 @@ class Entity(BaseModel):
     join_paths: list[JoinPath] = Field(default_factory=list)
     enum_mappings: list[EnumMapping] = Field(default_factory=list)
     semantic_roles: list[SemanticRole] = Field(default_factory=list)
+    # schema 漂移冻结的绑定（"table.column"），冻结绑定不进 agent 上下文（drift.py）
+    frozen_bindings: list[str] = Field(default_factory=list)
 
 
 class Metric(BaseModel):
