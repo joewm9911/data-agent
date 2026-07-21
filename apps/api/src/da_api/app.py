@@ -186,10 +186,13 @@ def create_app(state: AppState) -> FastAPI:
         outcome = await runtime.run_one_turn(identity, timeout_seconds=5.0)
         if outcome is None or outcome.error:
             raise HTTPException(500, outcome.error if outcome else "turn not executed")
+        answer = state.last_answers.get(sid)
         return {
             "session_id": sid,
             "turn_id": outcome.turn.turn_id,
             "answer": outcome.answer_text,
+            # 试一问（动线 C）需要的验证信息：指标直连命中即口径生效证明
+            "matched_metrics": getattr(answer, "matched_metrics", []),
         }
 
     @app.get("/sessions/{sid}/stream")
@@ -285,6 +288,48 @@ def create_app(state: AppState) -> FastAPI:
             "sessions": len({e.session_id for e in events}),
             "users": len({e.identity.user_id for e in events}),
             "accuracy": state.eval_report.accuracy if state.eval_report else None,
+        }
+
+    @app.get("/admin/todos")
+    async def todos():
+        """治理收件箱（动线 B）：待办 = 数量 + 原因 + 直达目标。"""
+        from da_semantic import Entity, Metric
+
+        semantics = state.agent._semantics  # noqa: SLF001
+        entities, frozen, affected_metrics = [], [], []
+        for n in await semantics.list_names("entity"):
+            r = await semantics.get("entity", n)
+            if r:
+                e = Entity.model_validate(r.payload)
+                entities.append(e)
+                frozen.extend(f"{n}: {fb}" for fb in e.frozen_bindings)
+        drafts = []
+        for n in await semantics.list_names("metric"):
+            r = await semantics.get("metric", n)
+            if r:
+                m = Metric.model_validate(r.payload)
+                if not m.verified:
+                    drafts.append(m.name)
+                if frozen and m.numerator and any(
+                    m.numerator.table in fb for fb in frozen
+                ):
+                    affected_metrics.append(m.name)
+        pending = state.confirmations.pending()
+        return {
+            "confirmations": {
+                "count": len(pending),
+                "top": pending[0].question[:60] if pending else "",
+            },
+            "drift": {"count": len(frozen), "items": frozen[:5],
+                      "affected_metrics": affected_metrics},
+            "draft_metrics": {"count": len(drafts), "names": drafts[:8]},
+            "sop": {
+                "has_source": bool(state.sources),
+                "active_source": state.active_source,
+                "has_semantics": bool(await semantics.list_names("entity"))
+                or bool(await semantics.list_names("metric")),
+                "confirm_clear": not pending,
+            },
         }
 
     @app.get("/admin/users")

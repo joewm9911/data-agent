@@ -96,6 +96,8 @@ CONSOLE_HTML = """<!doctype html>
   .empty { color:var(--muted); padding:32px; text-align:center;
     background:var(--panel); border:1px dashed var(--border);
     border-radius:var(--radius); }
+  .rowHi td { background:rgba(77,163,255,.08); }
+  .pickerRow td { padding:0 8px 8px; }
 </style>
 </head>
 <body>
@@ -125,16 +127,16 @@ CONSOLE_HTML = """<!doctype html>
   <main>
 
   <section id="overview" class="active">
+    <h2>待办 <span class="sub" style="display:inline;margin:0">
+      治理收件箱——每项一键直达，处理完回到这里</span></h2>
+    <div id="todoList"></div>
+    <h2 style="margin-top:22px">运行统计</h2>
     <div class="cards" id="statCards"></div>
-    <h2>快速开始</h2>
-    <p class="sub">接入 SOP：添加数据源 → 集成测试 → 激活 → 一键冷启动 → 确认队列走查</p>
-    <div class="toolbar">
-      <button class="primary" onclick="go('sources')">去接入数据源</button>
-      <button onclick="go('confirm')">处理确认队列</button>
-    </div>
   </section>
 
   <section id="sources">
+    <div id="sopBar" class="form" style="gap:4px;padding:10px 16px"></div>
+    <div id="opResult" style="display:none;margin-bottom:16px" class="form"></div>
     <h2>数据集上传（零门槛接入）</h2>
     <div class="form">
       <input type="file" id="dsFile" accept=".csv,.tsv,.xlsx">
@@ -174,10 +176,24 @@ CONSOLE_HTML = """<!doctype html>
     <h2>映射矩阵 <span class="sub" style="display:inline;margin:0">
       行 = 语义对象，列 = 使用中数据源的表，格 = 绑定</span></h2>
     <div class="toolbar">
-      <button onclick="newEntity()">＋ 新建实体</button>
-      <button onclick="newRole()">＋ 新建属性（语义角色）</button>
+      <button onclick="toggleForm('entityForm')">＋ 新建实体</button>
+      <button onclick="toggleForm('roleForm')">＋ 新建属性（语义角色）</button>
       <label style="font-size:12px;color:var(--muted)">
         <input type="checkbox" id="onlyUnbound" onchange="renderMatrix()"> 仅看未绑定</label>
+    </div>
+    <div id="entityForm" class="form" style="display:none">
+      <input id="neName" placeholder="实体名，如：客户" size="12">
+      <input id="neKey" placeholder="主键概念名，如：customer_id" size="16">
+      <button class="primary" onclick="createEntity()">创建</button>
+      <button onclick="toggleForm('entityForm')">取消</button>
+      <span class="hint">创建后在矩阵行中逐格绑定各表的物理列</span>
+    </div>
+    <div id="roleForm" class="form" style="display:none">
+      <select id="nrEntity" style="max-width:160px"></select>
+      <input id="nrRole" placeholder="语义角色名，如：支付日期" size="14">
+      <button class="primary" onclick="createRole()">创建</button>
+      <button onclick="toggleForm('roleForm')">取消</button>
+      <span class="hint">角色行出现后点击 ＋ 绑定各表的列；指标的统计时间字段引用它</span>
     </div>
     <div style="overflow-x:auto">
       <table style="min-width:640px"><thead id="matrixHead"></thead>
@@ -190,7 +206,7 @@ CONSOLE_HTML = """<!doctype html>
         <button id="tabCol" class="primary" onclick="pickerMode('col')">选择列</button>
         <button id="tabExpr" onclick="pickerMode('expr')">ƒ SQL 转换</button>
         <span style="flex:1"></span>
-        <button onclick="$('cellPicker').style.display='none'">关闭</button>
+        <button onclick="closePicker()">关闭</button>
       </div>
       <div id="pickerCols" style="width:100%;display:flex;gap:6px;flex-wrap:wrap"></div>
       <div id="pickerExpr" style="width:100%;display:none">
@@ -255,6 +271,21 @@ CONSOLE_HTML = """<!doctype html>
         <span style="flex:1"></span>
         <button class="primary" onclick="saveMetric()">保存（产生新版本）</button>
         <button onclick="$('metricEditor').style.display='none'">取消</button>
+      </div>
+      <div id="metricErrBox" style="width:100%;display:none;background:var(--panel2);
+        border:1px solid var(--err);border-radius:6px;padding:8px 12px;
+        font-size:12px"></div>
+      <div id="verifyPanel" style="width:100%;display:none;border-top:1px solid
+        var(--border);padding-top:10px;margin-top:4px">
+        <b style="font-size:12px;color:var(--accent)">试一问验证</b>
+        <span class="hint" style="width:auto;margin-left:8px">
+          以当前操作员权限发起真实问答，验证口径生效</span>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <input id="verifyQ" style="flex:1">
+          <button class="primary" onclick="verifyAsk()">提问</button>
+        </div>
+        <pre id="verifyOut" class="mono" style="margin-top:8px;font-size:12px;
+          white-space:pre-wrap;color:var(--text)"></pre>
       </div>
     </div>
 
@@ -334,17 +365,62 @@ document.querySelectorAll('nav a').forEach(a=>a.onclick=e=>{
   e.preventDefault(); go(a.hash.slice(1)); });
 $('tenant').onchange=()=>go(document.querySelector('main section.active').id);
 
+function todoRow(n, color, title, sub, btnLabel, target, primary=true){
+  return '<div style="display:flex;align-items:center;gap:12px;background:'+
+    'var(--panel);border:1px solid var(--border);border-radius:8px;'+
+    'padding:10px 14px;margin-bottom:8px">'+
+    '<span style="font-size:18px;font-weight:700;min-width:26px;'+
+    'text-align:center;color:'+color+'">'+n+'</span>'+
+    '<span style="flex:1">'+title+
+    '<small style="display:block;color:var(--muted);margin-top:1px">'+sub+
+    '</small></span>'+
+    '<button '+(primary?'class="primary" ':'')+'onclick="go(\\''+target+
+    '\\')">'+btnLabel+'</button></div>';
+}
+
 async function loadOverview(){
-  const o=await(await fetch('/admin/overview?'+tenantQ(),{headers:H()})).json();
+  const [o, t]=await Promise.all([
+    fetch('/admin/overview?'+tenantQ(),{headers:H()}).then(r=>r.json()),
+    fetch('/admin/todos',{headers:H()}).then(r=>r.json()),
+  ]);
+  let todos='';
+  if(!t.sop.has_source)
+    todos+=todoRow('!','var(--accent)','开始接入第一个数据源',
+      '上传数据集或连接 CK/Hive，接入向导会引导完成全部步骤',
+      '开始接入','sources');
+  if(t.confirmations.count)
+    todos+=todoRow(t.confirmations.count,'var(--warn)','待确认口径',
+      t.confirmations.top||'确认队列有待处理项','去处理','confirm');
+  if(t.drift.count)
+    todos+=todoRow(t.drift.count,'var(--err)','漂移告警：绑定已冻结',
+      t.drift.items.join('；')+(t.drift.affected_metrics.length?
+        '——受影响指标：'+t.drift.affected_metrics.join('、'):''),
+      '去修复','semantic');
+  if(t.draft_metrics.count)
+    todos+=todoRow(t.draft_metrics.count,'var(--muted)','草稿指标未确认',
+      t.draft_metrics.names.join('、')+'——试算通过并确认后才是可信口径',
+      '去试算','semantic',false);
+  $('todoList').innerHTML=todos||
+    '<div class="empty">没有待办 🎉 语义层健康，去对话页看看效果吧</div>';
+
   const acc=o.accuracy==null?'—':Math.round(o.accuracy*100)+'%';
   $('statCards').innerHTML=[
-    ['数据源',o.sources+(o.active_source?'（使用中：'+o.active_source+'）':'')],
+    ['数据源',o.sources+(o.active_source?'（'+o.active_source+'）':'')],
     ['业务实体',o.entities],['指标口径',o.metrics],
-    ['已验证答案',o.verified_answers],['待确认项',o.pending_confirmations],
-    ['审计事件',o.audit_events],['会话数',o.sessions],['活跃用户',o.users],
-    ['准确率',acc],
+    ['已验证答案',o.verified_answers],['会话数',o.sessions],
+    ['活跃用户',o.users],['审计事件',o.audit_events],['准确率',acc],
   ].map(([k,v])=>'<div class="stat"><div class="k">'+k+
     '</div><div class="v">'+v+'</div></div>').join('');
+}
+
+function toggleForm(id){
+  const el=$(id);
+  el.style.display=el.style.display==='none'?'flex':'none';
+}
+function showResult(html){
+  const box=$('opResult');
+  box.innerHTML=html; box.style.display='flex';
+  box.scrollIntoView({behavior:'smooth'});
 }
 
 const SRC_FIELDS={
@@ -368,9 +444,39 @@ async function addSource(){
     (d.test.table_names||[]).join(', ')):'✗ '+(d.detail||r.status), r.ok);
   loadSources();
 }
+function renderSop(t, hasSources){
+  const steps=[
+    ['连接数据源', hasSources],
+    ['集成体检', hasSources],
+    ['选表集成 / 冷启动', t.sop.has_semantics],
+    ['确认口径', t.sop.has_semantics && t.sop.confirm_clear],
+    ['试问验证', false],
+  ];
+  let cur=steps.findIndex(s=>!s[1]); if(cur<0) cur=steps.length-1;
+  $('sopBar').innerHTML='<span style="font-size:12px;color:var(--muted);'+
+    'margin-right:6px">接入 SOP</span>'+steps.map(([label,done],i)=>{
+    const state=done?'done':(i===cur?'cur':'');
+    const dot=done?'✓':(i+1);
+    return '<span style="display:flex;align-items:center;gap:6px;font-size:12px">'+
+      '<span style="width:20px;height:20px;border-radius:50%;display:flex;'+
+      'align-items:center;justify-content:center;font-size:11px;'+
+      (done?'background:rgba(63,185,80,.15);color:var(--ok)':
+       i===cur?'background:var(--accent);color:#fff':
+       'background:var(--panel2);color:var(--muted)')+'">'+dot+'</span>'+
+      '<span style="color:'+(i===cur?'var(--text)':'var(--muted)')+'">'+label+
+      '</span></span>'+(i<steps.length-1?
+      '<span style="width:22px;height:1px;background:'+
+      (done?'var(--ok)':'var(--border)')+';margin:0 4px"></span>':'');
+  }).join('');
+}
+
 async function loadSources(){
   renderSrcFields();
-  const list=await(await fetch('/admin/sources',{headers:H()})).json();
+  const [list, t]=await Promise.all([
+    fetch('/admin/sources',{headers:H()}).then(r=>r.json()),
+    fetch('/admin/todos',{headers:H()}).then(r=>r.json()),
+  ]);
+  renderSop(t, list.length>0);
   $('srcRows').innerHTML=list.map(s=>{
     const status=s.active?'<span class="badge b-ok">使用中</span>'
       :'<span class="badge b-dim">已接入</span>';
@@ -378,7 +484,7 @@ async function loadSources(){
       '</td><td>'+
       '<button onclick="browseMetadata(\\''+s.source_id+'\\')">元数据</button> '+
       '<button onclick="testSource(\\''+s.source_id+'\\')">集成测试</button> '+
-      (s.active?'':'<button onclick="activateSource(\\''+s.source_id+
+      (s.active?'':'<button onclick="activateSource(this,\\''+s.source_id+
         '\\')">激活</button> ')+
       '<button onclick="bootstrapSource(this,\\''+s.source_id+
         '\\')">全库冷启动</button></td></tr>';
@@ -401,16 +507,31 @@ async function browseMetadata(id){
   $('metaBrowser').style.display='block';
   $('metaBrowser').scrollIntoView({behavior:'smooth'});
 }
+function integrationResultCard(title, d){
+  return '<div style="width:100%"><b style="font-size:13px;color:var(--ok)">✓ '+
+    title+'</b></div>'+
+    '<span class="badge b-dim">实体草稿 '+d.entities_created.length+'</span>'+
+    '<span class="badge b-dim">指标草稿 '+d.metrics_drafted.length+'</span>'+
+    '<span class="badge b-warn">确认题 +'+d.confirmations_queued+'</span>'+
+    '<span class="badge b-dim">profiling '+d.profiled_columns+' 列</span>'+
+    '<span style="flex:1"></span>'+
+    (d.confirmations_queued?
+      '<button class="primary" onclick="go(\\'confirm\\')">去确认口径 →</button>':
+      '<button class="primary" onclick="go(\\'semantic\\')">查看语义层 →</button>')+
+    '<button onclick="$(\\'opResult\\').style.display=\\'none\\'">关闭</button>';
+}
 async function integrateTables(){
   const tables=[...document.querySelectorAll('.metaSel:checked')].map(i=>i.value);
   if(!tables.length){ toast('请勾选至少一张表', false); return; }
+  showResult('<b style="font-size:13px">集成中… profiling '+tables.length+
+    ' 张表，证据图归一…</b>');
   const r=await fetch('/admin/sources/'+metaSource+'/integrate',
     {method:'POST',headers:H(),body:JSON.stringify({tables})});
   const d=await r.json();
-  if(!r.ok){ toast('✗ '+(d.detail||r.status), false); return; }
-  toast('✓ 集成完成\\n实体草稿 '+d.entities_created.length+' 个 · 指标草稿 '+
-    d.metrics_drafted.length+' 个\\n确认队列 +'+d.confirmations_queued+
-    ' · profiling '+d.profiled_columns+' 列\\n→ 去语义层/确认队列查看归一结果');
+  if(!r.ok){ showResult('<b style="color:var(--err)">✗ 集成失败：'+
+    (d.detail||r.status)+'</b><button onclick="integrateTables()">重试</button>');
+    return; }
+  showResult(integrationResultCard('集成完成（'+tables.join(' / ')+'）', d));
 }
 async function testSource(id){
   const r=await(await fetch('/admin/sources/'+id+'/test',
@@ -418,17 +539,26 @@ async function testSource(id){
   toast((r.passed?'✓ 体检通过\\n':'✗ 体检未通过\\n')+
     r.checks.map(c=>(c.ok?'✓ ':'✗ ')+c.name+'：'+c.detail).join('\\n'), r.passed);
 }
-async function activateSource(id){
+async function activateSource(btn,id){
+  // 风险分级：换源影响所有用户的查询目标 → 二次确认（就地，不用原生弹窗）
+  if(btn.dataset.armed!=='1'){
+    btn.dataset.armed='1';
+    btn.textContent='确认切换？影响所有用户';
+    btn.style.borderColor='var(--warn)'; btn.style.color='var(--warn)';
+    setTimeout(()=>{ btn.dataset.armed=''; btn.textContent='激活';
+      btn.style.borderColor=''; btn.style.color=''; }, 4000);
+    return;
+  }
   await fetch('/admin/sources/'+id+'/activate',{method:'POST',headers:H()});
   toast('✓ 已切换到 '+id); loadSources(); }
 async function bootstrapSource(btn,id){
   btn.disabled=true; btn.textContent='冷启动中…';
+  showResult('<b style="font-size:13px">冷启动中… 挖掘查询日志 → profiling → '+
+    '证据图归一（全库）</b>');
   const r=await(await fetch('/admin/sources/'+id+'/bootstrap',
     {method:'POST',headers:H()})).json();
-  btn.disabled=false; btn.textContent='冷启动语义层';
-  toast('✓ 冷启动完成\\n实体草稿 '+r.entities_created.length+
-    ' 个 · 指标草稿 '+r.metrics_drafted.length+' 个\\n确认队列 +'+
-    r.confirmations_queued+' · profiling '+r.profiled_columns+' 列');
+  btn.disabled=false; btn.textContent='全库冷启动';
+  showResult(integrationResultCard('冷启动完成 · '+id, r));
 }
 async function uploadDataset(){
   const f=$('dsFile').files[0]; if(!f){ toast('请先选择文件', false); return; }
@@ -458,6 +588,8 @@ async function loadSemantic(){
       {headers:H()})).json();
     matrixTables=meta.tables;
   }
+  $('nrEntity').innerHTML=Object.keys(entityCache).map(n=>
+    '<option>'+n+'</option>').join('')||'<option value="">（先创建实体）</option>';
   renderMatrix(); renderMetrics();
 }
 
@@ -466,9 +598,10 @@ function chipHtml(text, frozen){
     'var(--border);border-radius:6px;padding:2px 7px;font-size:11.5px">'+
     (frozen?'❄ ':'')+text+'</span>';
 }
-function plusHtml(onclick){
+function plusHtml(entity, kind, table){
   return '<button style="border-style:dashed;padding:2px 10px;font-size:12px" '+
-    'onclick="'+onclick+'">＋</button>';
+    'data-e="'+entity+'" data-k="'+kind+'" data-t="'+table+'" '+
+    'onclick="openPicker(this)">＋</button>';
 }
 
 function renderMatrix(){
@@ -494,8 +627,7 @@ function renderMatrix(){
       const b=(p.bindings||[]).find(x=>x.table===t);
       if(b) return '<td>'+chipHtml(b.expr?('ƒ '+b.expr):b.column,
         frozen.has(b.table+'.'+b.column))+'</td>';
-      return '<td>'+plusHtml('openPicker(\\''+name+'\\',\\'binding\\',\\''+t+'\\')')+
-        '</td>';
+      return '<td>'+plusHtml(name,'binding',t)+'</td>';
     });
     const anyUnbound=(p.bindings||[]).length<tables.length;
     if(!onlyUnbound || anyUnbound)
@@ -509,8 +641,7 @@ function renderMatrix(){
       const cells=tables.map(t=>{
         const r=roles[role].find(x=>x.table===t);
         if(r) return '<td>'+chipHtml(r.column,false)+'</td>';
-        return '<td>'+plusHtml('openPicker(\\''+name+'\\',\\'role:'+role+
-          '\\',\\''+t+'\\')')+'</td>';
+        return '<td>'+plusHtml(name,'role:'+role,t)+'</td>';
       });
       if(!onlyUnbound || roles[role].length<tables.length)
         html+='<tr><td>'+role+'<span style="font-size:10.5px;color:var(--muted);'+
@@ -535,25 +666,32 @@ function renderMatrix(){
     '暂无实体——可"新建实体"或经数据源集成产出</td></tr>';
 }
 
-function newEntity(){
-  const name=prompt('实体名（如：客户）'); if(!name) return;
-  const key=prompt('主键概念名（canonical key，如：customer_id）')||'id';
-  fetch('/admin/semantic/entities/'+encodeURIComponent(name),{method:'PUT',
+async function createEntity(){
+  const name=$('neName').value.trim(), key=$('neKey').value.trim()||'id';
+  if(!name){ toast('实体名不能为空',false); return; }
+  await fetch('/admin/semantic/entities/'+encodeURIComponent(name),{method:'PUT',
     headers:H(),body:JSON.stringify({canonical_key:key,aliases:[],bindings:[],
-    join_paths:[],enum_mappings:[],semantic_roles:[]})}).then(()=>loadSemantic());
+    join_paths:[],enum_mappings:[],semantic_roles:[]})});
+  toggleForm('entityForm'); $('neName').value=''; $('neKey').value='';
+  toast('✓ 实体「'+name+'」已创建——在矩阵行中逐格绑定');
+  loadSemantic();
 }
-function newRole(){
-  const ent=prompt('挂在哪个实体下？（'+Object.keys(entityCache).join(' / ')+'）');
-  if(!ent||!entityCache[ent]){ if(ent) toast('实体不存在',false); return; }
-  const role=prompt('语义角色名（如：支付日期）'); if(!role) return;
-  toast('已创建角色「'+role+'」——在矩阵行中点击 ＋ 绑定各表的列');
+function createRole(){
+  const ent=$('nrEntity').value, role=$('nrRole').value.trim();
+  if(!ent||!entityCache[ent]){ toast('请先创建实体',false); return; }
+  if(!role){ toast('角色名不能为空',false); return; }
   const p=entityCache[ent].payload;
   p.semantic_roles=p.semantic_roles||[];
+  if(p.semantic_roles.some(r=>r.role===role && r.table!=='__pending__')){
+    toast('角色已存在',false); return; }
   p.semantic_roles.push({table:'__pending__',column:'__pending__',role});
+  toggleForm('roleForm'); $('nrRole').value='';
+  toast('✓ 角色「'+role+'」已创建——在角色行点击 ＋ 绑定各表的列');
   putEntity(ent,p);
 }
 
-function openPicker(entity, kind, table){
+function openPicker(el){
+  const entity=el.dataset.e, kind=el.dataset.k, table=el.dataset.t;
   pickerCtx={entity,kind,table};
   const label=kind==='binding'?(entityCache[entity].payload.canonical_key+'（主键）')
     :kind.slice(5)+'（语义角色）';
@@ -567,8 +705,31 @@ function openPicker(entity, kind, table){
     cols.map(c=>'<option>'+c.name+'</option>').join('');
   $('exprInput').value=''; $('exprPreview').textContent='';
   pickerMode('col');
+  // 锚定单元格：选择器作为被点行正下方的展开行，保持空间上下文
+  closePicker();
+  const tr=el.closest('tr'); tr.classList.add('rowHi');
+  const nrow=document.createElement('tr'); nrow.className='pickerRow';
+  const td=document.createElement('td'); td.colSpan=tr.children.length;
+  td.appendChild($('cellPicker'));
+  nrow.appendChild(td); tr.after(nrow);
   $('cellPicker').style.display='flex';
-  $('cellPicker').scrollIntoView({behavior:'smooth'});
+  nrow.scrollIntoView({behavior:'smooth', block:'center'});
+}
+function closePicker(){
+  $('cellPicker').style.display='none';
+  document.body.appendChild($('cellPicker'));
+  document.querySelectorAll('.pickerRow').forEach(r=>r.remove());
+  document.querySelectorAll('.rowHi').forEach(r=>r.classList.remove('rowHi'));
+}
+function jumpToBind(role, table){
+  go('semantic');
+  setTimeout(()=>{
+    const btn=document.querySelector(
+      '[data-k="role:'+role+'"][data-t="'+table+'"]');
+    if(btn){ openPicker(btn); }
+    else { toggleForm('roleForm'); $('nrRole').value=role;
+      toast('角色「'+role+'」尚未创建——先在此创建，再绑定表 '+table, false); }
+  }, 400);
 }
 function pickerMode(m){
   $('pickerCols').style.display=m==='col'?'flex':'none';
@@ -604,7 +765,7 @@ function applyBinding(col, expr){
     p.semantic_roles.push({table,column:expr||col,role});
   }
   putEntity(entity,p);
-  $('cellPicker').style.display='none';
+  closePicker();
 }
 async function putEntity(name,payload){
   const r=await fetch('/admin/semantic/entities/'+encodeURIComponent(name),
@@ -680,13 +841,27 @@ function buildMetricBody(){
       description:$('mDenDesc').value.trim(), table, filter};
   return body;
 }
+function showMetricErr(msg){
+  // 报错即动作：解析"请先在映射矩阵为表 X 绑定语义角色 Y"→ 附 [去绑定] 直达按钮
+  const box=$('metricErrBox');
+  let html='✗ '+msg;
+  const re=/为表 (\S+) 绑定语义角色 (\S+?)($|；)/g;
+  let m;
+  while((m=re.exec(msg))!==null){
+    html+=' <button style="font-size:11px;padding:2px 10px" '+
+      'onclick="jumpToBind(\\''+m[2]+'\\',\\''+m[1]+'\\')">去绑定 '+m[2]+
+      ' → '+m[1]+'</button>';
+  }
+  box.innerHTML=html; box.style.display='block';
+}
 async function trialMetric(){
+  $('metricErrBox').style.display='none';
   const r=await fetch('/admin/semantic/metrics/trial',{method:'POST',headers:H(),
     body:JSON.stringify({metric:buildMetricBody(),
       start:$('mStart').value,end:$('mEnd').value})});
   const d=await r.json();
-  if(!r.ok){ $('trialOut').style.color='var(--err)';
-    $('trialOut').textContent='✗ '+(d.detail||r.status); return; }
+  if(!r.ok){ $('trialOut').textContent='';
+    showMetricErr(d.detail||r.status); return; }
   $('trialOut').style.color='var(--ok)';
   const num=d.numerator_value==null?'—':(+d.numerator_value).toLocaleString();
   $('trialOut').textContent='✓ '+num+
@@ -694,14 +869,32 @@ async function trialMetric(){
       ' = '+(d.ratio*100).toFixed(1)+'%'):'');
 }
 async function saveMetric(){
+  $('metricErrBox').style.display='none';
   const body=buildMetricBody();
   if(!body.name){ toast('指标名不能为空',false); return; }
   const r=await fetch('/admin/semantic/metrics/'+encodeURIComponent(body.name),
     {method:'PUT',headers:H(),body:JSON.stringify(body)});
   const d=await r.json();
-  toast(r.ok?('✓ 已保存 '+body.name+'（v'+d.version+'）')
-    :('✗ '+(d.detail||r.status)),r.ok);
-  if(r.ok){ $('metricEditor').style.display='none'; loadSemantic(); }
+  if(!r.ok){ showMetricErr(d.detail||r.status); return; }
+  toast('✓ 已保存 '+body.name+'（v'+d.version+'）');
+  loadSemantic();
+  // 动线 C · 就地验证：保存完成态直接给"试一问"，当场看新口径生效
+  $('verifyQ').value=body.name+'是多少？';
+  $('verifyOut').textContent='';
+  $('verifyPanel').style.display='block';
+  $('verifyPanel').scrollIntoView({behavior:'smooth', block:'center'});
+}
+async function verifyAsk(){
+  $('verifyOut').textContent='提问中…（真实问答，以当前操作员权限执行）';
+  const sid='console-verify-'+Math.random().toString(36).slice(2,8);
+  const r=await fetch('/sessions/'+sid+'/turns',{method:'POST',headers:H(),
+    body:JSON.stringify({question:$('verifyQ').value})});
+  const d=await r.json();
+  if(!r.ok){ $('verifyOut').textContent='✗ '+(d.detail||r.status); return; }
+  const hits=d.matched_metrics||[];
+  const head=hits.length?('【指标直连 ✓ '+hits.join('、')+'——口径已生效】\\n\\n')
+    :('【未命中指标直连：检查指标名/别名是否覆盖该问法】\\n\\n');
+  $('verifyOut').textContent=head+d.answer;
 }
 async function showHistory(kind,name){
   const rows=await(await fetch('/admin/semantic/history?kind='+kind+

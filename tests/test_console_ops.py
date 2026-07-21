@@ -75,3 +75,25 @@ def test_users_permission_view(tmp_path):
     assert users["alice"]["allowed_databases"] == "main"
     assert users["alice"]["tenant"] == "acme"
     assert users["bob"]["allowed_databases"] == ""  # 出现过但未授权 → 运营端可见
+
+
+def test_todos_inbox(tmp_path):
+    """治理收件箱（动线 B）：草稿指标/确认题/SOP 状态。"""
+    c, state, _ = make_console_client(tmp_path)
+    c.put("/admin/semantic/metrics/草稿X", headers=H, json={
+        "definition": "d", "numerator": {"expr": "COUNT(*)", "table": "t"},
+        "verified": False})
+    t = c.get("/admin/todos", headers=H).json()
+    assert t["draft_metrics"]["count"] == 1
+    assert t["draft_metrics"]["names"] == ["草稿X"]
+    assert t["confirmations"]["count"] == 0
+    assert t["sop"]["has_semantics"] is True
+
+
+def test_turn_returns_matched_metrics(tmp_path):
+    """试一问（动线 C）依赖 turn 响应带回指标直连命中。"""
+    c, state, _ = make_console_client(tmp_path)
+    r = c.post("/sessions/v1/turns", json={"question": "q"},
+               headers={"X-User-Id": "alice", "X-Tenant-Id": "acme"})
+    assert r.status_code == 200
+    assert "matched_metrics" in r.json()

@@ -1,0 +1,181 @@
+<title>运营端动线重设计 · 设计稿</title>
+<style>
+  :root { --page:#f5f4f0; --ink:#1c1c1a; --ink2:#6b6a64; --line:#e3e1d9;
+    --accent:#4da3ff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --page:#101214; --ink:#e8e8e4; --ink2:#98978f; --line:#2b2e33; }
+  }
+  :root[data-theme="dark"] { --page:#101214; --ink:#e8e8e4; --ink2:#98978f;
+    --line:#2b2e33; }
+  :root[data-theme="light"] { --page:#f5f4f0; --ink:#1c1c1a; --ink2:#6b6a64;
+    --line:#e3e1d9; }
+  body { background:var(--page); color:var(--ink); margin:0;
+    font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif; }
+  .wrap { max-width:1020px; margin:0 auto; padding:40px 24px 64px; }
+  h1 { font-size:22px; font-weight:600; margin:0 0 6px; }
+  h2.sec { font-size:15px; margin:34px 0 4px; }
+  .lede, .secsub { color:var(--ink2); font-size:13.5px; line-height:1.7;
+    max-width:70ch; margin:0 0 18px; }
+  .audit { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:16px 0; }
+  .audit div { border:1px solid var(--line); border-radius:8px; padding:10px 12px;
+    font-size:12.5px; line-height:1.55; color:var(--ink2); }
+  .audit b { color:var(--ink); display:block; margin-bottom:2px; font-size:12.5px; }
+
+  .console { background:#0d1117; border:1px solid #2d333b; border-radius:12px;
+    padding:18px; color:#e6edf3; font-size:12.5px; overflow-x:auto; }
+  .btn { background:#1c2129; border:1px solid #2d333b; color:#e6edf3;
+    border-radius:6px; padding:5px 12px; font-size:12px; display:inline-block; }
+  .btn.p { background:#4da3ff; border-color:#4da3ff; color:#fff; }
+  .btn.ghost { background:none; border-style:dashed; color:#8b949e; }
+  .chip { font-family:ui-monospace,Menlo,monospace; font-size:11.5px;
+    background:#1c2129; border:1px solid #2d333b; border-radius:6px;
+    padding:2px 8px; display:inline-block; }
+  .tag { display:inline-block; font-size:10.5px; padding:1px 7px;
+    border-radius:9px; }
+  .tag.ok { background:#12291f; color:#3fb950; }
+  .tag.warn { background:#3a2c10; color:#d29922; }
+  .tag.err { background:#3a1518; color:#f85149; }
+  .tag.dim { background:#1c2129; color:#8b949e; }
+  .muted { color:#8b949e; }
+
+  .steps { display:flex; align-items:center; gap:0; margin:4px 0 16px; }
+  .step { display:flex; align-items:center; gap:7px; font-size:12px; }
+  .step .dot { width:22px; height:22px; border-radius:50%; display:flex;
+    align-items:center; justify-content:center; font-size:11px; font-weight:600;
+    background:#1c2129; color:#8b949e; border:1px solid #2d333b; }
+  .step.done .dot { background:#12291f; color:#3fb950; border-color:#2ea04366; }
+  .step.cur .dot { background:#4da3ff; color:#fff; border-color:#4da3ff; }
+  .step.cur { color:#e6edf3; font-weight:600; }
+  .step .lbl { color:#8b949e; } .step.cur .lbl { color:#e6edf3; }
+  .conn { width:34px; height:1px; background:#2d333b; margin:0 8px; }
+  .conn.done { background:#3fb950; }
+
+  .todo { display:flex; align-items:center; gap:10px; background:#161b22;
+    border:1px solid #2d333b; border-radius:8px; padding:10px 14px;
+    margin-bottom:8px; }
+  .todo .n { font-size:18px; font-weight:700; min-width:26px; text-align:center; }
+  .todo .t { flex:1; }
+  .todo .t small { display:block; color:#8b949e; margin-top:1px; }
+
+  .card { background:#161b22; border:1px solid #2d333b; border-radius:8px;
+    padding:12px 14px; }
+  .flow { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+    font-size:12px; color:#8b949e; margin:8px 0 2px; }
+  .flow .node { background:#1c2129; border:1px solid #2d333b; border-radius:6px;
+    padding:4px 10px; color:#e6edf3; }
+  .flow .arr { color:#4d5561; }
+  .note { display:flex; gap:10px; align-items:baseline; margin:8px 0;
+    font-size:13px; color:var(--ink2); line-height:1.6; }
+  .note b { color:var(--ink); }
+  .num { flex:none; width:20px; height:20px; border-radius:50%;
+    background:var(--accent); color:#fff; font-size:12px; display:flex;
+    align-items:center; justify-content:center; transform:translateY(3px); }
+</style>
+<div class="wrap">
+  <h1>运营端动线重设计</h1>
+  <p class="lede">现状是"功能都有、动线没有"：任务路径靠用户脑内串联。重设计围绕三条任务动线组织：
+  <b>接入</b>（从 0 到可问答）、<b>治理</b>(待办驱动的日常维护)、<b>验证</b>（改完立刻试一问）。</p>
+
+  <h2 class="sec">现状审计 · 八处粗糙点</h2>
+  <div class="audit">
+    <div><b>1 · 空状态无引导</b>新租户打开概览是九个 0，不知道第一步做什么。</div>
+    <div><b>2 · SOP 是隐性的</b>接入五步散落在按钮里，无进度感知，中断后不知道走到哪了。</div>
+    <div><b>3 · 原生弹窗</b>建实体/角色用 prompt()，冷启动结果用 alert()——最粗糙的交互。</div>
+    <div><b>4 · 动线断点</b>toast 说"去确认队列查看"却没有链接；校验报错"请先绑定语义角色"却不能点过去。</div>
+    <div><b>5 · 上下文丢失</b>绑定选择器出现在表格外面，和被点的单元格失去空间关联。</div>
+    <div><b>6 · 长操作无进度</b>冷启动/集成只有按钮文字变化，结果一闪而过没有落点。</div>
+    <div><b>7 · 风险不分级</b>激活换源影响所有用户却一键即切；普通绑定反而多步。</div>
+    <div><b>8 · 两端割裂</b>对话页与控制台互相到达全靠手动，语义修改后无法就地验证效果。</div>
+  </div>
+
+  <h2 class="sec">动线 A · 接入向导（从 0 到可问答）</h2>
+  <p class="secsub">五步向导替代散落按钮。状态持久化：中断后回来从断点继续；每步完成自动推进并给出下一步动作。</p>
+  <div class="console">
+    <div class="steps">
+      <span class="step done"><span class="dot">✓</span><span class="lbl">连接数据源</span></span>
+      <span class="conn done"></span>
+      <span class="step done"><span class="dot">✓</span><span class="lbl">集成体检</span></span>
+      <span class="conn done"></span>
+      <span class="step cur"><span class="dot">3</span><span class="lbl">选表集成</span></span>
+      <span class="conn"></span>
+      <span class="step"><span class="dot">4</span><span class="lbl">确认口径</span></span>
+      <span class="conn"></span>
+      <span class="step"><span class="dot">5</span><span class="lbl">试问验证</span></span>
+    </div>
+    <div class="card">
+      <b style="font-size:13px">第 3 步 · 选择要集成的表</b>
+      <span class="muted" style="margin-left:8px">ck-prod · 体检通过 ✓ 只读护栏 ✓</span>
+      <div style="margin:10px 0;display:flex;gap:8px;flex-wrap:wrap">
+        <span class="btn"><input type="checkbox" checked> orders（3,000 行）</span>
+        <span class="btn"><input type="checkbox" checked> crm_contacts（510 行）</span>
+        <span class="btn"><input type="checkbox"> cs_tickets（500 行）</span>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <span class="btn p">集成并继续 →</span>
+        <span class="muted" style="font-size:11.5px">集成中显示进度：
+          profiling 6/10 列 · 证据图归一…（不再是无反馈等待）</span>
+      </div>
+    </div>
+    <div class="flow">完成态：<span class="node">结果卡</span><span class="arr">→</span>
+      <span class="node">实体草稿 1 · 确认题 3 · 指标草稿 2</span><span class="arr">→</span>
+      <span class="node">[去确认口径] 主按钮自动推进第 4 步</span></div>
+  </div>
+
+  <h2 class="sec">动线 B · 待办驱动的概览（治理收件箱）</h2>
+  <p class="secsub">概览从"数字堆砌"改为"待办清单"：每项待办 = 数量 + 原因 + 一键直达；处理完回到清单，像清收件箱。统计数字降级为次要信息。</p>
+  <div class="console">
+    <div class="todo"><span class="n" style="color:#d29922">3</span>
+      <span class="t">待确认口径 <small>实体合并 2 · 枚举含义 1——最高热度：orders 表</small></span>
+      <span class="btn p">去处理</span></div>
+    <div class="todo"><span class="n" style="color:#f85149">1</span>
+      <span class="t">漂移告警 <small>orders.cust_no 类型变更，1 个绑定已冻结，GMV 受影响</small></span>
+      <span class="btn p">去修复</span></div>
+    <div class="todo"><span class="n" style="color:#8b949e">2</span>
+      <span class="t">草稿指标未试算 <small>工单解决率 · 客单价——试算通过才能被 agent 使用</small></span>
+      <span class="btn">去试算</span></div>
+    <div class="todo" style="border-style:dashed"><span class="n" style="color:#3fb950">✓</span>
+      <span class="t">接入向导 <small>ck-prod 已完成 5/5 步 · datasets 停在第 3 步</small></span>
+      <span class="btn ghost">继续向导</span></div>
+    <div class="muted" style="font-size:11.5px;margin-top:8px">
+      次要区（收起）：数据源 2 · 实体 1 · 指标 4 · 会话 18 · 准确率 96%（周环比 +2pp）</div>
+  </div>
+
+  <h2 class="sec">动线 C · 就地验证（改完试一问）</h2>
+  <p class="secsub">任何语义变更的完成态都带"试一问"：不离开控制台发起一次真实问答，验证口径生效。这是语义层工作的闭环——改口径的人当场看到 agent 按新口径回答。</p>
+  <div class="console">
+    <div class="card">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <span class="tag ok">✓ 已保存</span><b>GMV v3</b>
+        <span class="muted">filter 增加排除内部订单</span>
+        <span style="flex:1"></span><span class="btn">查看历史</span>
+      </div>
+      <div style="border-top:1px solid #2d333b;padding-top:10px">
+        <b style="font-size:12px;color:#4da3ff">试一问验证</b>
+        <div style="display:flex;gap:8px;margin:8px 0">
+          <span class="chip" style="flex:1;padding:6px 10px">6月GMV是多少？</span>
+          <span class="btn p">提问</span>
+        </div>
+        <div class="muted" style="font-size:11.5px;background:#0d1117;
+          border:1px solid #2d333b;border-radius:6px;padding:8px 10px">
+          <span class="tag dim">指标直连 ✓ GMV</span>　结论：402,118.55 元<br>
+          口径声明：已支付、排除测试账号、<b style="color:#3fb950">排除内部订单（新）</b>
+          ——新口径已生效 ✓</div>
+      </div>
+    </div>
+  </div>
+
+  <h2 class="sec">交互细节升级清单</h2>
+  <div class="note"><span class="num">1</span><span><b>弹窗全面替换。</b>prompt()/alert()
+    → 内联表单与结果卡；错误信息驻留在触发位置旁，不再一闪而过。</span></div>
+  <div class="note"><span class="num">2</span><span><b>报错即动作。</b>
+    "请先在映射矩阵为表 orders 绑定语义角色 支付日期" 附带 [去绑定] 按钮——
+    点击跳转矩阵并高亮目标单元格、自动打开绑定选择器。所有跨页提示都带直达链接。</span></div>
+  <div class="note"><span class="num">3</span><span><b>选择器锚定单元格。</b>矩阵绑定选择器
+    渲染为被点单元格正下方的展开行（accordion row），保持空间上下文；当前行高亮。</span></div>
+  <div class="note"><span class="num">4</span><span><b>长操作三态。</b>进行中（行内进度：
+    "profiling 6/10 列"）→ 完成（结果卡：产出数量 + 下一步主按钮）→ 失败（原因 + 重试）。</span></div>
+  <div class="note"><span class="num">5</span><span><b>风险分级确认。</b>激活换源弹确认
+    （"将影响所有用户的查询目标，当前 3 个活跃会话"）；只读操作零确认。</span></div>
+  <div class="note"><span class="num">6</span><span><b>两端互通锚点。</b>对话页回答的口径声明
+    可点击 → 直达控制台该指标编辑（带权限）；控制台"试一问"面板复用对话 API。</span></div>
+</div>
