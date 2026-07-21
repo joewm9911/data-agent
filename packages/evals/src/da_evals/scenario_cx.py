@@ -146,6 +146,7 @@ async def seed_semantics(store: SemanticStore, actor: str = "bootstrap") -> None
     )
     gmv = Metric(
         name="GMV",
+        aliases=["成交额", "销售额"],
         definition=(
             "已支付订单（stat=1）金额汇总，按支付日期 pay_dt 归属，"
             "排除测试账号（cust_no 以 TEST 开头）"

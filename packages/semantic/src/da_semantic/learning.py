@@ -56,6 +56,20 @@ class LearningLoop:
             payload["aliases"] = aliases
             await self._store.put("entity", entity_name, payload, actor)
 
+    async def record_metric_alias(
+        self, alias: str, metric_name: str, actor: str
+    ) -> None:
+        """指标别名澄清即沉淀："'成交额'就是 GMV" → 之后指标直连判决性命中。"""
+        record = await self._store.get("metric", metric_name)
+        if record is None:
+            return
+        payload = dict(record.payload)
+        aliases = list(payload.get("aliases", []))
+        if alias not in aliases:
+            aliases.append(alias)
+            payload["aliases"] = aliases
+            await self._store.put("metric", metric_name, payload, actor)
+
     async def record_correction(
         self,
         metric_name: str,

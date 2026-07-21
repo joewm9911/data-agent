@@ -60,6 +60,8 @@ class Metric(BaseModel):
     name: str
     definition: str  # 业务口径描述，回答时作为口径声明输出
     expr: str  # SQL 表达式
+    # 业务黑话别名（"成交额"="GMV"）：指标直连匹配的判决依据，澄清即沉淀
+    aliases: list[str] = Field(default_factory=list)
     grain: list[str] = Field(default_factory=list)
     verified: bool = False  # 人工确认标记
     restricted: bool = False  # 权限分区：受限层不进低权限用户上下文（6.2-3）

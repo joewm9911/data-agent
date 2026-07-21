@@ -20,6 +20,7 @@ from da_governance.breaker import (
     RateQuota,
 )
 from da_semantic import LearningLoop, SemanticStore
+from da_semantic.resolver import MetricResolver
 from da_types import (
     CatalogSnapshot,
     DataObject,
@@ -111,6 +112,8 @@ class Answer(BaseModel):
     llm_calls: int = 0
     # 自动生成的 SVG 图表（5.1 四件套之"图"）
     charts: list[str] = Field(default_factory=list)
+    # 指标直连命中（确定性匹配，语义层成熟度指标）
+    matched_metrics: list[str] = Field(default_factory=list)
 
 
 class DataAnalystAgent:
@@ -139,6 +142,7 @@ class DataAnalystAgent:
         self._breaker = breaker
         self._quota = quota
         self._attribution = MetricTreeEngine(connector, self._guard)
+        self._metric_resolver = MetricResolver(semantic_store)
         self._catalog: CatalogSnapshot | None = None
 
     async def _get_catalog(self) -> CatalogSnapshot:
@@ -187,7 +191,18 @@ class DataAnalystAgent:
                 )
             )
 
-        await audit("question", {"text": question})
+        # 指标直连（三层匹配的确定性层）：名称/别名判决性命中 → 口径置顶注入
+        metric_matches = await self._metric_resolver.resolve(question)
+        exact = [m for m in metric_matches if m.score >= 0.999
+                 and not m.metric.restricted]
+        await audit(
+            "question",
+            {"text": question,
+             "matched_metrics": [
+                 {"name": m.metric.name, "by": m.matched_by, "score": m.score}
+                 for m in metric_matches
+             ]},
+        )
 
         catalog = await self._get_catalog()
         system = await build_system_prompt(
@@ -199,6 +214,17 @@ class DataAnalystAgent:
 
         # verified answer 命中（4.5/6.1）：复用 SQL 模板，以提问者身份重执行
         user_content = question
+        if exact:
+            hints = "\n".join(
+                f"- 指标「{m.metric.name}」"
+                f"（{'别名' if m.matched_by == 'alias' else '名称'}命中）："
+                f"{m.metric.definition}；表达式：{m.metric.expr}"
+                for m in exact
+            )
+            user_content = (
+                f"{question}\n\n[系统提示] 问题命中以下预定义指标，"
+                f"必须严格按其口径计算，不得自行调整：\n{hints}"
+            )
         if self._learning is not None:
             hit = await self._learning.find_verified_answer(question)
             if hit is not None and not hit.restricted:
@@ -243,6 +269,7 @@ class DataAnalystAgent:
                     output_tokens=usage.output_tokens,
                     llm_calls=usage.llm_calls,
                     charts=charts,
+                    matched_metrics=[m.metric.name for m in exact],
                 )
 
             messages.append({"role": "assistant", "content": response.content})
@@ -294,6 +321,7 @@ class DataAnalystAgent:
             output_tokens=usage.output_tokens,
             llm_calls=usage.llm_calls,
             charts=charts,
+            matched_metrics=[m.metric.name for m in exact],
         )
 
     async def _run_attribution(

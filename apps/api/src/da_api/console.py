@@ -174,7 +174,8 @@ CONSOLE_HTML = """<!doctype html>
     <h2>指标口径管理</h2>
     <div class="form" id="metricForm">
       <input id="mName" placeholder="指标名" size="10">
-      <input id="mDef" placeholder="业务口径定义（回答中的口径声明）" size="34">
+      <input id="mDef" placeholder="业务口径定义（回答中的口径声明）" size="30">
+      <input id="mAliases" placeholder="别名，如 成交额,销售额" size="14">
       <input id="mExpr" placeholder="SQL 表达式" size="30">
       <input id="mGrain" placeholder="维度，如 day,chan" size="12">
       <label><input type="checkbox" id="mVerified"> 已确认</label>
@@ -394,7 +395,9 @@ async function loadSemantic(){
   $('metricRows').innerHTML=metrics.map(m=>{
     metricCache[m.name]=m; const p=m.payload;
     return '<tr><td><b>'+m.name+'</b><br><small style="color:var(--muted)">v'+
-      m.version+' · '+m.updated_by+'</small></td><td>'+(p.definition||'—')+
+      m.version+' · '+m.updated_by+
+      ((p.aliases||[]).length?('<br><small style="color:var(--muted)">别名：'+
+        p.aliases.join('/')+'</small>'):'')+'</small></td><td>'+(p.definition||'—')+
       '</td><td class="mono">'+(p.expr||'')+'</td><td>'+
       (p.verified?'<span class="badge b-ok">✓ 已确认</span>'
         :'<span class="badge b-warn">草稿</span>')+
@@ -421,6 +424,7 @@ async function loadSemantic(){
 function editMetric(name){
   const p=metricCache[name].payload;
   $('mName').value=name; $('mDef').value=p.definition||'';
+  $('mAliases').value=(p.aliases||[]).join(',');
   $('mExpr').value=p.expr||''; $('mGrain').value=(p.grain||[]).join(',');
   $('mVerified').checked=!!p.verified; $('mRestricted').checked=!!p.restricted;
   $('metricForm').scrollIntoView({behavior:'smooth'});
@@ -429,6 +433,7 @@ async function saveMetric(){
   const name=$('mName').value.trim();
   if(!name){ toast('指标名不能为空', false); return; }
   const body={definition:$('mDef').value, expr:$('mExpr').value,
+    aliases:$('mAliases').value.split(',').map(s=>s.trim()).filter(Boolean),
     grain:$('mGrain').value.split(',').map(s=>s.trim()).filter(Boolean),
     verified:$('mVerified').checked, restricted:$('mRestricted').checked};
   const r=await fetch('/admin/semantic/metrics/'+encodeURIComponent(name),

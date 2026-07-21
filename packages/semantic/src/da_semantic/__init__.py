@@ -17,6 +17,7 @@ from da_semantic.model import (
     VerifiedAnswer,
 )
 from da_semantic.profiling import ColumnProfile, profile_catalog, value_overlaps
+from da_semantic.resolver import MetricMatch, MetricResolver
 from da_semantic.store import InMemorySemanticStore, SemanticStore, VersionedRecord
 
 __all__ = [
@@ -35,6 +36,8 @@ __all__ = [
     "JoinPath",
     "LearningLoop",
     "Metric",
+    "MetricMatch",
+    "MetricResolver",
     "MiningReport",
     "SemanticRole",
     "SemanticStore",
