@@ -488,13 +488,13 @@ function renderMatrix(){
       '<b>▣ 实体 · '+name+'</b> <small style="color:var(--muted)">别名：'+
       ((p.aliases||[]).join(' / ')||'—')+' · v'+e.version+'</small>'+
       '<span style="float:right"><button style="font-size:11px;padding:2px 8px" '+
-      'onclick="showHistory(\'entity\',\''+name+'\')">历史</button></span></td></tr>';
+      'onclick="showHistory(\\'entity\\',\\''+name+'\\')">历史</button></span></td></tr>';
     // 主键行（bindings）
     const bindCells=tables.map(t=>{
       const b=(p.bindings||[]).find(x=>x.table===t);
       if(b) return '<td>'+chipHtml(b.expr?('ƒ '+b.expr):b.column,
         frozen.has(b.table+'.'+b.column))+'</td>';
-      return '<td>'+plusHtml('openPicker(\''+name+'\',\'binding\',\''+t+'\')')+
+      return '<td>'+plusHtml('openPicker(\\''+name+'\\',\\'binding\\',\\''+t+'\\')')+
         '</td>';
     });
     const anyUnbound=(p.bindings||[]).length<tables.length;
@@ -509,8 +509,8 @@ function renderMatrix(){
       const cells=tables.map(t=>{
         const r=roles[role].find(x=>x.table===t);
         if(r) return '<td>'+chipHtml(r.column,false)+'</td>';
-        return '<td>'+plusHtml('openPicker(\''+name+'\',\'role:'+role+
-          '\',\''+t+'\')')+'</td>';
+        return '<td>'+plusHtml('openPicker(\\''+name+'\\',\\'role:'+role+
+          '\\',\\''+t+'\\')')+'</td>';
       });
       if(!onlyUnbound || roles[role].length<tables.length)
         html+='<tr><td>'+role+'<span style="font-size:10.5px;color:var(--muted);'+
@@ -560,7 +560,7 @@ function openPicker(entity, kind, table){
   $('pickerTitle').textContent='绑定 · '+entity+' / '+label+' → 表 '+table;
   const cols=(matrixTables.find(t=>t.name===table)||{columns:[]}).columns;
   $('pickerCols').innerHTML=cols.map(c=>
-    '<button style="font-size:12px" onclick="saveColBinding(\''+c.name+'\')">'+
+    '<button style="font-size:12px" onclick="saveColBinding(\\''+c.name+'\\')">'+
     c.name+' <small style="color:var(--muted)">'+c.type+'</small></button>').join('')
     ||'<span class="hint">该表无列信息</span>';
   $('exprSourceCol').innerHTML='<option value="">（预览对照列，可选）</option>'+
@@ -582,7 +582,7 @@ async function previewExpr(){
       source_column:$('exprSourceCol').value})});
   const d=await r.json();
   $('exprPreview').textContent=r.ok?
-    ('✓ 方言校验通过\n预览：\n'+d.rows.map(row=>row.join('  →  ')).join('\n')):
+    ('✓ 方言校验通过\\n预览：\\n'+d.rows.map(row=>row.join('  →  ')).join('\\n')):
     ('✗ '+(d.detail||r.status));
 }
 function saveColBinding(col){ applyBinding(col, ''); }
@@ -632,8 +632,8 @@ function renderMetrics(){
       '</td><td>'+(p.verified?'<span class="badge b-ok">✓ 已确认</span>'
         :'<span class="badge b-warn">草稿</span>')+
       (p.restricted?' <span class="badge b-err">受限</span>':'')+'</td>'+
-      '<td><button onclick="editMetric(\''+name+'\')">编辑</button> '+
-      '<button onclick="showHistory(\'metric\',\''+name+'\')">历史</button>'+
+      '<td><button onclick="editMetric(\\''+name+'\\')">编辑</button> '+
+      '<button onclick="showHistory(\\'metric\\',\\''+name+'\\')">历史</button>'+
       '</td></tr>';
   }).join('')||'<tr><td colspan="6" class="empty">暂无指标</td></tr>';
 }

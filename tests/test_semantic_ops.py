@@ -118,6 +118,9 @@ def test_console_page_has_management_ui(tmp_path):
     for marker in ("映射矩阵", "集成所选表到语义层", "SQL 转换", "统计时间字段",
                    "filter 表达式", "试算", "版本历史"):
         assert marker in html
+    # JS 内联 onclick 的引号转义必须存活（曾因双层转义丢失导致整页脚本失效）
+    assert "showHistory(\\'entity\\'" in html
+    assert "showHistory('entity'" not in html
 
 
 def test_dataset_headers_unused_import_guard(tmp_path):
