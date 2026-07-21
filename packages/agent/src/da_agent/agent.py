@@ -218,7 +218,7 @@ class DataAnalystAgent:
             hints = "\n".join(
                 f"- 指标「{m.metric.name}」"
                 f"（{'别名' if m.matched_by == 'alias' else '名称'}命中）："
-                f"{m.metric.definition}；表达式：{m.metric.expr}"
+                f"{m.metric.caliber_text()}"
                 for m in exact
             )
             user_content = (

@@ -115,7 +115,8 @@ def test_integrate_preserves_pending_confirmations(tmp_path):
 def test_console_page_has_management_ui(tmp_path):
     c, _, _ = _client(tmp_path)
     html = c.get("/console").text
-    for marker in ("元数据", "集成所选表到语义层", "保存指标", "版本历史"):
+    for marker in ("映射矩阵", "集成所选表到语义层", "SQL 转换", "统计时间字段",
+                   "filter 表达式", "试算", "版本历史"):
         assert marker in html
 
 

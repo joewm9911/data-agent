@@ -116,6 +116,18 @@ class IntegrateRequest(BaseModel):
     tables: list[str] = []
 
 
+class TrialRequest(BaseModel):
+    metric: dict
+    start: str = ""
+    end: str = ""
+
+
+class BindingPreviewRequest(BaseModel):
+    table: str
+    expr: str
+    source_column: str = ""  # 可选：预览时并排展示原值 → 转换值
+
+
 def create_app(state: AppState) -> FastAPI:
     app = FastAPI(title="data-agent", version="0.2.0")
 
@@ -479,20 +491,106 @@ def create_app(state: AppState) -> FastAPI:
             for r in await semantics.history(kind, name)  # type: ignore[arg-type]
         ]
 
+    async def _load_entities():
+        from da_semantic import Entity
+
+        semantics = state.agent._semantics  # noqa: SLF001
+        out = []
+        for n in await semantics.list_names("entity"):
+            record = await semantics.get("entity", n)
+            if record is not None:
+                out.append(Entity.model_validate(record.payload))
+        return out
+
     @app.put("/admin/semantic/metrics/{name}")
     async def put_metric(
         name: str, body: dict, identity: UserIdentity = Depends(get_identity)
     ):
-        from da_semantic import Metric
+        from da_governance import validate_expression_fragment
+        from da_semantic import Metric, validate_metric
 
         try:
             metric = Metric.model_validate({**body, "name": name})
         except Exception as e:  # noqa: BLE001
             raise HTTPException(400, f"指标定义不合法: {e}") from e
+
+        # 八要素校验：组件完整性 + 时间口径一致性（跨表两表都要有语义角色绑定）
+        errors = validate_metric(metric, await _load_entities())
+        dialect = state.agent._connector.dialect  # noqa: SLF001
+        for label, fragment in [
+            ("分子", metric.numerator.expr if metric.numerator else ""),
+            ("分母", metric.denominator.expr if metric.denominator else ""),
+            ("filter", metric.numerator.filter if metric.numerator else ""),
+        ]:
+            if fragment.strip():
+                err = validate_expression_fragment(fragment, dialect)
+                if err:
+                    errors.append(f"{label}：{err}")
+        if errors:
+            raise HTTPException(400, "；".join(errors))
+
         record = await state.agent._semantics.put(  # noqa: SLF001
             "metric", name, metric.model_dump(), identity.user_id
         )
         return {"name": name, "version": record.version}
+
+    @app.post("/admin/semantic/metrics/trial")
+    async def trial_metric_endpoint(
+        body: TrialRequest, identity: UserIdentity = Depends(get_identity)
+    ):
+        """指标试算（保存前强制）：真实执行分子/分母 SQL，返回值与比率。"""
+        from da_semantic import Metric, trial_metric
+
+        try:
+            metric = Metric.model_validate(body.metric)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(400, f"指标定义不合法: {e}") from e
+        try:
+            trial = await trial_metric(
+                state.agent._connector, metric, await _load_entities(),  # noqa: SLF001
+                UserIdentity(tenant_id=identity.tenant_id, user_id="_trial"),
+                body.start, body.end,
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except ConnectorError as e:
+            raise HTTPException(400, f"试算执行失败: {e}") from e
+        return {
+            "numerator_sql": trial.numerator_sql,
+            "numerator_value": trial.numerator_value,
+            "denominator_sql": trial.denominator_sql,
+            "denominator_value": trial.denominator_value,
+            "ratio": trial.ratio,
+        }
+
+    @app.post("/admin/semantic/bindings/preview")
+    async def preview_binding(
+        body: BindingPreviewRequest, identity: UserIdentity = Depends(get_identity)
+    ):
+        """SQL 转换绑定：方言校验 + 采样预览（保存前看到转换结果）。"""
+        from da_governance import validate_expression_fragment
+        from da_types import GuardPolicy, Query
+
+        connector = state.agent._connector  # noqa: SLF001
+        err = validate_expression_fragment(body.expr, connector.dialect)
+        if err:
+            raise HTTPException(400, err)
+        try:
+            result = await connector.execute(
+                Query(
+                    statement=(
+                        f"SELECT {body.source_column}, {body.expr} "
+                        f"FROM {body.table} LIMIT 5"
+                    ) if body.source_column else
+                    f"SELECT {body.expr} FROM {body.table} LIMIT 5",
+                    dialect=connector.dialect,
+                ),
+                UserIdentity(tenant_id=identity.tenant_id, user_id="_preview"),
+                GuardPolicy(max_result_rows=5),
+            )
+        except ConnectorError as e:
+            raise HTTPException(400, f"预览执行失败: {e}") from e
+        return {"ok": True, "rows": result.rows}
 
     @app.put("/admin/semantic/entities/{name}")
     async def put_entity(

@@ -171,37 +171,93 @@ CONSOLE_HTML = """<!doctype html>
   </section>
 
   <section id="semantic">
-    <h2>指标口径管理</h2>
-    <div class="form" id="metricForm">
-      <input id="mName" placeholder="指标名" size="10">
-      <input id="mDef" placeholder="业务口径定义（回答中的口径声明）" size="30">
-      <input id="mAliases" placeholder="别名，如 成交额,销售额" size="14">
-      <input id="mExpr" placeholder="SQL 表达式" size="30">
-      <input id="mGrain" placeholder="维度，如 day,chan" size="12">
-      <label><input type="checkbox" id="mVerified"> 已确认</label>
-      <label><input type="checkbox" id="mRestricted"> 受限</label>
-      <button class="primary" onclick="saveMetric()">保存指标</button>
-      <span class="hint">保存即产生新版本（append-only，历史可溯）</span>
+    <h2>映射矩阵 <span class="sub" style="display:inline;margin:0">
+      行 = 语义对象，列 = 使用中数据源的表，格 = 绑定</span></h2>
+    <div class="toolbar">
+      <button onclick="newEntity()">＋ 新建实体</button>
+      <button onclick="newRole()">＋ 新建属性（语义角色）</button>
+      <label style="font-size:12px;color:var(--muted)">
+        <input type="checkbox" id="onlyUnbound" onchange="renderMatrix()"> 仅看未绑定</label>
     </div>
-    <table><thead><tr><th>指标</th><th>口径定义</th><th>表达式</th><th>状态</th>
-      <th style="width:170px">操作</th></tr></thead>
-    <tbody id="metricRows"></tbody></table>
+    <div style="overflow-x:auto">
+      <table style="min-width:640px"><thead id="matrixHead"></thead>
+      <tbody id="matrixBody"></tbody></table>
+    </div>
 
-    <h2 style="margin-top:22px">业务实体管理</h2>
-    <table><thead><tr><th>实体</th><th>别名</th><th>物理绑定</th><th>关联路径</th>
-      <th style="width:210px">操作</th></tr></thead>
-    <tbody id="entityRows"></tbody></table>
-    <div id="entityEditor" style="display:none;margin-top:14px">
-      <h2>编辑实体 · <span id="eName"></span></h2>
-      <textarea id="eJson" rows="12" style="width:100%;background:var(--panel2);
-        color:var(--text);border:1px solid var(--border);border-radius:6px;
-        padding:10px;font-family:ui-monospace,Menlo,monospace;font-size:12px">
-      </textarea>
-      <div class="toolbar" style="margin-top:10px">
-        <button class="primary" onclick="saveEntity()">保存实体</button>
-        <button onclick="$('entityEditor').style.display='none'">取消</button>
+    <div id="cellPicker" style="display:none;margin-top:14px" class="form">
+      <div style="width:100%"><b id="pickerTitle" style="font-size:13px"></b></div>
+      <div style="width:100%;display:flex;gap:8px">
+        <button id="tabCol" class="primary" onclick="pickerMode('col')">选择列</button>
+        <button id="tabExpr" onclick="pickerMode('expr')">ƒ SQL 转换</button>
+        <span style="flex:1"></span>
+        <button onclick="$('cellPicker').style.display='none'">关闭</button>
+      </div>
+      <div id="pickerCols" style="width:100%;display:flex;gap:6px;flex-wrap:wrap"></div>
+      <div id="pickerExpr" style="width:100%;display:none">
+        <input id="exprInput" placeholder="SQL 转换片段，如 strftime('%Y-%m', pay_dt)"
+          style="width:60%">
+        <select id="exprSourceCol" style="max-width:150px"></select>
+        <button onclick="previewExpr()">校验并预览</button>
+        <button class="primary" onclick="saveExprBinding()">保存绑定</button>
+        <pre id="exprPreview" class="mono" style="margin-top:8px;font-size:11px;
+          color:var(--muted);white-space:pre-wrap"></pre>
       </div>
     </div>
+
+    <h2 style="margin-top:24px">指标配置
+      <button class="primary" style="margin-left:10px;font-size:12px"
+        onclick="editMetric('')">＋ 新建指标</button></h2>
+    <table><thead><tr><th style="width:130px">指标</th><th>构成（分子 ÷ 分母）</th>
+      <th style="width:100px">关联数据表</th><th style="width:100px">统计时间字段</th>
+      <th style="width:80px">状态</th><th style="width:130px">操作</th></tr></thead>
+    <tbody id="metricRows"></tbody></table>
+
+    <div id="metricEditor" style="display:none;margin-top:14px" class="form">
+      <div style="width:100%;display:grid;grid-template-columns:130px 1fr;
+        gap:8px 12px;align-items:center">
+        <span class="hint" style="width:auto">指标名</span>
+        <span><input id="mName" size="12">
+          <input id="mAliases" placeholder="别名，逗号分隔" size="18"></span>
+        <span class="hint" style="width:auto">指标描述</span>
+        <input id="mDef" style="width:90%">
+        <span class="hint" style="width:auto">关联的数据表</span>
+        <select id="mTable" style="max-width:200px"></select>
+        <span class="hint" style="width:auto">统计时间字段</span>
+        <span><select id="mTime" style="max-width:200px"></select>
+          <span class="hint" style="width:auto;margin-left:8px">
+            引用矩阵语义角色；跨表指标要求两表都有绑定</span></span>
+        <span class="hint" style="width:auto">filter 表达式</span>
+        <input id="mFilter" placeholder="公共过滤，作用于分子与分母，可留空"
+          style="width:90%">
+      </div>
+      <div style="width:100%;display:grid;grid-template-columns:1fr 1fr;gap:12px;
+        margin-top:8px">
+        <div style="border:1px solid var(--border);border-radius:8px;padding:10px">
+          <div style="color:var(--ok);font-size:12px;margin-bottom:6px"><b>分子</b></div>
+          <input id="mNumExpr" placeholder="聚合表达式，如 SUM(order_amt)"
+            style="width:95%">
+          <input id="mNumDesc" placeholder="分子描述" style="width:95%;margin-top:6px">
+        </div>
+        <div style="border:1px solid var(--border);border-radius:8px;padding:10px">
+          <div style="color:var(--warn);font-size:12px;margin-bottom:6px">
+            <b>分母</b> <span class="hint" style="width:auto">可选，留空即单一聚合</span></div>
+          <input id="mDenExpr" placeholder="聚合表达式，如 COUNT(*)" style="width:95%">
+          <input id="mDenDesc" placeholder="分母描述" style="width:95%;margin-top:6px">
+        </div>
+      </div>
+      <div style="width:100%;display:flex;gap:10px;align-items:center;margin-top:8px">
+        <label style="font-size:12px"><input type="checkbox" id="mVerified"> 已确认</label>
+        <label style="font-size:12px"><input type="checkbox" id="mRestricted"> 受限</label>
+        试算区间 <input id="mStart" value="2026-06-01" size="9">
+        ~ <input id="mEnd" value="2026-06-30" size="9">
+        <button onclick="trialMetric()">试算</button>
+        <span id="trialOut" style="font-size:12px;color:var(--ok)"></span>
+        <span style="flex:1"></span>
+        <button class="primary" onclick="saveMetric()">保存（产生新版本）</button>
+        <button onclick="$('metricEditor').style.display='none'">取消</button>
+      </div>
+    </div>
+
     <div id="historyPanel" style="display:none;margin-top:14px">
       <h2>版本历史 · <span id="hName"></span></h2>
       <table><thead><tr><th>版本</th><th>修改人</th><th>时间</th><th>内容</th></tr></thead>
@@ -385,85 +441,267 @@ async function uploadDataset(){
   loadSources();
 }
 
-let metricCache={}, entityCache={};
+let metricCache={}, entityCache={}, matrixTables=[], pickerCtx=null;
+
 async function loadSemantic(){
-  const metrics=await(await fetch('/admin/semantic/objects?kind=metric',
-    {headers:H()})).json();
-  const entities=await(await fetch('/admin/semantic/objects?kind=entity',
-    {headers:H()})).json();
-  metricCache={}; entityCache={};
-  $('metricRows').innerHTML=metrics.map(m=>{
-    metricCache[m.name]=m; const p=m.payload;
-    return '<tr><td><b>'+m.name+'</b><br><small style="color:var(--muted)">v'+
-      m.version+' · '+m.updated_by+
-      ((p.aliases||[]).length?('<br><small style="color:var(--muted)">别名：'+
-        p.aliases.join('/')+'</small>'):'')+'</small></td><td>'+(p.definition||'—')+
-      '</td><td class="mono">'+(p.expr||'')+'</td><td>'+
-      (p.verified?'<span class="badge b-ok">✓ 已确认</span>'
-        :'<span class="badge b-warn">草稿</span>')+
-      (p.restricted?' <span class="badge b-err">受限</span>':'')+'</td><td>'+
-      '<button onclick="editMetric(\\''+m.name+'\\')">编辑</button> '+
-      (p.verified?'':'<button onclick="verifyMetric(\\''+m.name+
-        '\\')">确认</button> ')+
-      '<button onclick="showHistory(\\'metric\\',\\''+m.name+'\\')">历史</button>'+
-      '</td></tr>';
-  }).join('')||'<tr><td colspan="5" class="empty">暂无指标，可在上方表单新建</td></tr>';
-  $('entityRows').innerHTML=entities.map(e=>{
-    entityCache[e.name]=e; const p=e.payload;
-    return '<tr><td><b>'+e.name+'</b><br><small style="color:var(--muted)">v'+
-      e.version+'</small></td><td>'+((p.aliases||[]).join(' / ')||'—')+
-      '</td><td class="mono">'+(p.bindings||[]).map(b=>b.table+'.'+b.column)
-        .join('\\n')+
-      '</td><td class="mono">'+(p.join_paths||[]).map(j=>j.expr).join('\\n')+
-      '</td><td>'+
-      '<button onclick="editEntity(\\''+e.name+'\\')">编辑</button> '+
-      '<button onclick="showHistory(\\'entity\\',\\''+e.name+'\\')">历史</button>'+
-      '</td></tr>';
-  }).join('')||'<tr><td colspan="5" class="empty">暂无实体（可经数据源集成产出）</td></tr>';
+  const [entities, metrics] = await Promise.all([
+    fetch('/admin/semantic/objects?kind=entity',{headers:H()}).then(r=>r.json()),
+    fetch('/admin/semantic/objects?kind=metric',{headers:H()}).then(r=>r.json()),
+  ]);
+  entityCache={}; entities.forEach(e=>entityCache[e.name]=e);
+  metricCache={}; metrics.forEach(m=>metricCache[m.name]=m);
+  const sources=await(await fetch('/admin/sources',{headers:H()})).json();
+  const active=sources.find(s=>s.active);
+  matrixTables=[];
+  if(active){
+    const meta=await(await fetch('/admin/sources/'+active.source_id+'/metadata',
+      {headers:H()})).json();
+    matrixTables=meta.tables;
+  }
+  renderMatrix(); renderMetrics();
 }
-function editMetric(name){
-  const p=metricCache[name].payload;
-  $('mName').value=name; $('mDef').value=p.definition||'';
-  $('mAliases').value=(p.aliases||[]).join(',');
-  $('mExpr').value=p.expr||''; $('mGrain').value=(p.grain||[]).join(',');
-  $('mVerified').checked=!!p.verified; $('mRestricted').checked=!!p.restricted;
-  $('metricForm').scrollIntoView({behavior:'smooth'});
+
+function chipHtml(text, frozen){
+  return '<span class="mono" style="background:var(--panel2);border:0.5px solid '+
+    'var(--border);border-radius:6px;padding:2px 7px;font-size:11.5px">'+
+    (frozen?'❄ ':'')+text+'</span>';
 }
-async function saveMetric(){
-  const name=$('mName').value.trim();
-  if(!name){ toast('指标名不能为空', false); return; }
-  const body={definition:$('mDef').value, expr:$('mExpr').value,
-    aliases:$('mAliases').value.split(',').map(s=>s.trim()).filter(Boolean),
-    grain:$('mGrain').value.split(',').map(s=>s.trim()).filter(Boolean),
-    verified:$('mVerified').checked, restricted:$('mRestricted').checked};
-  const r=await fetch('/admin/semantic/metrics/'+encodeURIComponent(name),
-    {method:'PUT',headers:H(),body:JSON.stringify(body)});
+function plusHtml(onclick){
+  return '<button style="border-style:dashed;padding:2px 10px;font-size:12px" '+
+    'onclick="'+onclick+'">＋</button>';
+}
+
+function renderMatrix(){
+  const tables=matrixTables.map(t=>t.name);
+  $('matrixHead').innerHTML='<tr><th style="width:190px">语义对象</th>'+
+    tables.map(t=>{
+      const tt=matrixTables.find(x=>x.name===t);
+      return '<th>'+t+'<br><small style="color:var(--muted);font-weight:400">'+
+        (tt.row_count==null?'':tt.row_count.toLocaleString()+' 行')+'</small></th>';
+    }).join('')+'</tr>';
+  const onlyUnbound=$('onlyUnbound').checked;
+  let html='';
+  for(const name of Object.keys(entityCache)){
+    const e=entityCache[name], p=e.payload;
+    const frozen=new Set(p.frozen_bindings||[]);
+    html+='<tr><td colspan="'+(tables.length+1)+'" style="background:var(--panel2)">'+
+      '<b>▣ 实体 · '+name+'</b> <small style="color:var(--muted)">别名：'+
+      ((p.aliases||[]).join(' / ')||'—')+' · v'+e.version+'</small>'+
+      '<span style="float:right"><button style="font-size:11px;padding:2px 8px" '+
+      'onclick="showHistory(\'entity\',\''+name+'\')">历史</button></span></td></tr>';
+    // 主键行（bindings）
+    const bindCells=tables.map(t=>{
+      const b=(p.bindings||[]).find(x=>x.table===t);
+      if(b) return '<td>'+chipHtml(b.expr?('ƒ '+b.expr):b.column,
+        frozen.has(b.table+'.'+b.column))+'</td>';
+      return '<td>'+plusHtml('openPicker(\''+name+'\',\'binding\',\''+t+'\')')+
+        '</td>';
+    });
+    const anyUnbound=(p.bindings||[]).length<tables.length;
+    if(!onlyUnbound || anyUnbound)
+      html+='<tr><td><b>'+(p.canonical_key||'ID')+'</b>'+
+        '<span style="font-size:10.5px;color:var(--accent);margin-left:5px">主键</span>'+
+        '</td>'+bindCells.join('')+'</tr>';
+    // 语义角色行（按角色名分组）
+    const roles={};
+    (p.semantic_roles||[]).forEach(r=>{(roles[r.role]=roles[r.role]||[]).push(r);});
+    for(const role of Object.keys(roles)){
+      const cells=tables.map(t=>{
+        const r=roles[role].find(x=>x.table===t);
+        if(r) return '<td>'+chipHtml(r.column,false)+'</td>';
+        return '<td>'+plusHtml('openPicker(\''+name+'\',\'role:'+role+
+          '\',\''+t+'\')')+'</td>';
+      });
+      if(!onlyUnbound || roles[role].length<tables.length)
+        html+='<tr><td>'+role+'<span style="font-size:10.5px;color:var(--muted);'+
+          'margin-left:5px">语义角色</span></td>'+cells.join('')+'</tr>';
+    }
+    // 枚举行（只读展示）
+    for(const em of (p.enum_mappings||[])){
+      const cells=tables.map(t=>{
+        const hit=Object.keys(em.mappings||{}).find(k=>k.startsWith(t+'.'));
+        if(!hit) return '<td style="color:var(--muted);text-align:center">—</td>';
+        const pairs=Object.entries(em.mappings[hit]).map(([k,v])=>k+'='+v).join(' ');
+        return '<td>'+chipHtml(hit.split('.')[1],false)+
+          '<div style="font-size:10.5px;color:var(--muted);margin-top:2px">'+
+          pairs+'</div></td>';
+      });
+      if(!onlyUnbound)
+        html+='<tr><td>'+em.concept+'<span style="font-size:10.5px;'+
+          'color:var(--muted);margin-left:5px">枚举</span></td>'+cells.join('')+'</tr>';
+    }
+  }
+  $('matrixBody').innerHTML=html||'<tr><td class="empty" colspan="9">'+
+    '暂无实体——可"新建实体"或经数据源集成产出</td></tr>';
+}
+
+function newEntity(){
+  const name=prompt('实体名（如：客户）'); if(!name) return;
+  const key=prompt('主键概念名（canonical key，如：customer_id）')||'id';
+  fetch('/admin/semantic/entities/'+encodeURIComponent(name),{method:'PUT',
+    headers:H(),body:JSON.stringify({canonical_key:key,aliases:[],bindings:[],
+    join_paths:[],enum_mappings:[],semantic_roles:[]})}).then(()=>loadSemantic());
+}
+function newRole(){
+  const ent=prompt('挂在哪个实体下？（'+Object.keys(entityCache).join(' / ')+'）');
+  if(!ent||!entityCache[ent]){ if(ent) toast('实体不存在',false); return; }
+  const role=prompt('语义角色名（如：支付日期）'); if(!role) return;
+  toast('已创建角色「'+role+'」——在矩阵行中点击 ＋ 绑定各表的列');
+  const p=entityCache[ent].payload;
+  p.semantic_roles=p.semantic_roles||[];
+  p.semantic_roles.push({table:'__pending__',column:'__pending__',role});
+  putEntity(ent,p);
+}
+
+function openPicker(entity, kind, table){
+  pickerCtx={entity,kind,table};
+  const label=kind==='binding'?(entityCache[entity].payload.canonical_key+'（主键）')
+    :kind.slice(5)+'（语义角色）';
+  $('pickerTitle').textContent='绑定 · '+entity+' / '+label+' → 表 '+table;
+  const cols=(matrixTables.find(t=>t.name===table)||{columns:[]}).columns;
+  $('pickerCols').innerHTML=cols.map(c=>
+    '<button style="font-size:12px" onclick="saveColBinding(\''+c.name+'\')">'+
+    c.name+' <small style="color:var(--muted)">'+c.type+'</small></button>').join('')
+    ||'<span class="hint">该表无列信息</span>';
+  $('exprSourceCol').innerHTML='<option value="">（预览对照列，可选）</option>'+
+    cols.map(c=>'<option>'+c.name+'</option>').join('');
+  $('exprInput').value=''; $('exprPreview').textContent='';
+  pickerMode('col');
+  $('cellPicker').style.display='flex';
+  $('cellPicker').scrollIntoView({behavior:'smooth'});
+}
+function pickerMode(m){
+  $('pickerCols').style.display=m==='col'?'flex':'none';
+  $('pickerExpr').style.display=m==='expr'?'block':'none';
+  $('tabCol').className=m==='col'?'primary':'';
+  $('tabExpr').className=m==='expr'?'primary':'';
+}
+async function previewExpr(){
+  const r=await fetch('/admin/semantic/bindings/preview',{method:'POST',headers:H(),
+    body:JSON.stringify({table:pickerCtx.table,expr:$('exprInput').value,
+      source_column:$('exprSourceCol').value})});
   const d=await r.json();
-  toast(r.ok?('✓ 已保存 '+name+'（v'+d.version+'）'):('✗ '+(d.detail||r.status)),r.ok);
-  loadSemantic();
+  $('exprPreview').textContent=r.ok?
+    ('✓ 方言校验通过\n预览：\n'+d.rows.map(row=>row.join('  →  ')).join('\n')):
+    ('✗ '+(d.detail||r.status));
 }
-async function verifyMetric(name){
-  const p={...metricCache[name].payload, verified:true};
-  await fetch('/admin/semantic/metrics/'+encodeURIComponent(name),
-    {method:'PUT',headers:H(),body:JSON.stringify(p)});
-  toast('✓ '+name+' 已标记为确认口径'); loadSemantic();
+function saveColBinding(col){ applyBinding(col, ''); }
+function saveExprBinding(){
+  const expr=$('exprInput').value.trim();
+  if(!expr){ toast('表达式不能为空',false); return; }
+  applyBinding($('exprSourceCol').value||'', expr);
 }
-function editEntity(name){
-  $('eName').textContent=name;
-  $('eJson').value=JSON.stringify(entityCache[name].payload, null, 2);
-  $('entityEditor').style.display='block';
-  $('entityEditor').scrollIntoView({behavior:'smooth'});
+function applyBinding(col, expr){
+  const {entity,kind,table}=pickerCtx;
+  const p=entityCache[entity].payload;
+  if(kind==='binding'){
+    p.bindings=(p.bindings||[]).filter(b=>b.table!==table);
+    p.bindings.push({table,column:col,grain:'',expr});
+  } else {
+    const role=kind.slice(5);
+    p.semantic_roles=(p.semantic_roles||[]).filter(r=>
+      !(r.role===role&&(r.table===table||r.table==='__pending__')));
+    p.semantic_roles.push({table,column:expr||col,role});
+  }
+  putEntity(entity,p);
+  $('cellPicker').style.display='none';
 }
-async function saveEntity(){
-  let payload;
-  try{ payload=JSON.parse($('eJson').value); }
-  catch(e){ toast('JSON 不合法：'+e.message, false); return; }
-  const name=$('eName').textContent;
+async function putEntity(name,payload){
   const r=await fetch('/admin/semantic/entities/'+encodeURIComponent(name),
     {method:'PUT',headers:H(),body:JSON.stringify(payload)});
   const d=await r.json();
   toast(r.ok?('✓ 已保存 '+name+'（v'+d.version+'）'):('✗ '+(d.detail||r.status)),r.ok);
-  if(r.ok){ $('entityEditor').style.display='none'; loadSemantic(); }
+  loadSemantic();
+}
+
+function renderMetrics(){
+  $('metricRows').innerHTML=Object.keys(metricCache).map(name=>{
+    const m=metricCache[name], p=m.payload;
+    const num=p.numerator, den=p.denominator;
+    const comp=num?('<span class="mono">'+num.expr+'</span>'+
+      (den?(' ÷ <span class="mono">'+den.expr+'</span>'):'')+
+      (num.filter?('<div style="font-size:10.5px;color:var(--muted)">filter：'+
+        num.filter+'</div>'):'')):
+      ('<span class="mono">'+(p.expr||'—')+'</span>'+
+       '<div style="font-size:10.5px;color:var(--muted)">旧式表达式</div>');
+    return '<tr><td><b>'+name+'</b><br><small style="color:var(--muted)">'+
+      ((p.aliases||[]).join('/')||'')+' v'+m.version+'</small></td>'+
+      '<td>'+comp+'</td>'+
+      '<td>'+(num&&num.table?('<span class="mono">'+num.table+'</span>'):'—')+'</td>'+
+      '<td>'+(p.time_field?('<span class="badge b-dim">'+p.time_field+'</span>'):'—')+
+      '</td><td>'+(p.verified?'<span class="badge b-ok">✓ 已确认</span>'
+        :'<span class="badge b-warn">草稿</span>')+
+      (p.restricted?' <span class="badge b-err">受限</span>':'')+'</td>'+
+      '<td><button onclick="editMetric(\''+name+'\')">编辑</button> '+
+      '<button onclick="showHistory(\'metric\',\''+name+'\')">历史</button>'+
+      '</td></tr>';
+  }).join('')||'<tr><td colspan="6" class="empty">暂无指标</td></tr>';
+}
+
+function collectRoles(){
+  const roles=new Set();
+  Object.values(entityCache).forEach(e=>
+    (e.payload.semantic_roles||[]).forEach(r=>roles.add(r.role)));
+  return [...roles];
+}
+function editMetric(name){
+  const p=name?metricCache[name].payload:{};
+  $('mName').value=name||''; $('mDef').value=p.definition||'';
+  $('mAliases').value=(p.aliases||[]).join(',');
+  $('mTable').innerHTML=matrixTables.map(t=>'<option>'+t.name+'</option>').join('');
+  $('mTime').innerHTML='<option value="">（无时间口径）</option>'+
+    collectRoles().map(r=>'<option>'+r+'</option>').join('');
+  const num=p.numerator||{};
+  $('mTable').value=num.table||($('mTable').options[0]?.value||'');
+  $('mTime').value=p.time_field||'';
+  $('mFilter').value=num.filter||'';
+  $('mNumExpr').value=num.expr||p.expr||'';
+  $('mNumDesc').value=num.description||'';
+  $('mDenExpr').value=(p.denominator||{}).expr||'';
+  $('mDenDesc').value=(p.denominator||{}).description||'';
+  $('mVerified').checked=!!p.verified; $('mRestricted').checked=!!p.restricted;
+  $('trialOut').textContent='';
+  $('metricEditor').style.display='flex';
+  $('metricEditor').scrollIntoView({behavior:'smooth'});
+}
+function buildMetricBody(){
+  const table=$('mTable').value, filter=$('mFilter').value.trim();
+  const body={
+    name:$('mName').value.trim(),
+    definition:$('mDef').value.trim(),
+    aliases:$('mAliases').value.split(',').map(s=>s.trim()).filter(Boolean),
+    time_field:$('mTime').value,
+    numerator:{expr:$('mNumExpr').value.trim(),
+      description:$('mNumDesc').value.trim(), table, filter},
+    verified:$('mVerified').checked, restricted:$('mRestricted').checked,
+  };
+  if($('mDenExpr').value.trim())
+    body.denominator={expr:$('mDenExpr').value.trim(),
+      description:$('mDenDesc').value.trim(), table, filter};
+  return body;
+}
+async function trialMetric(){
+  const r=await fetch('/admin/semantic/metrics/trial',{method:'POST',headers:H(),
+    body:JSON.stringify({metric:buildMetricBody(),
+      start:$('mStart').value,end:$('mEnd').value})});
+  const d=await r.json();
+  if(!r.ok){ $('trialOut').style.color='var(--err)';
+    $('trialOut').textContent='✗ '+(d.detail||r.status); return; }
+  $('trialOut').style.color='var(--ok)';
+  const num=d.numerator_value==null?'—':(+d.numerator_value).toLocaleString();
+  $('trialOut').textContent='✓ '+num+
+    (d.denominator_value!=null?(' ÷ '+(+d.denominator_value).toLocaleString()+
+      ' = '+(d.ratio*100).toFixed(1)+'%'):'');
+}
+async function saveMetric(){
+  const body=buildMetricBody();
+  if(!body.name){ toast('指标名不能为空',false); return; }
+  const r=await fetch('/admin/semantic/metrics/'+encodeURIComponent(body.name),
+    {method:'PUT',headers:H(),body:JSON.stringify(body)});
+  const d=await r.json();
+  toast(r.ok?('✓ 已保存 '+body.name+'（v'+d.version+'）')
+    :('✗ '+(d.detail||r.status)),r.ok);
+  if(r.ok){ $('metricEditor').style.display='none'; loadSemantic(); }
 }
 async function showHistory(kind,name){
   const rows=await(await fetch('/admin/semantic/history?kind='+kind+

@@ -5,6 +5,13 @@ from da_semantic.confirmation import ConfirmationItem, ConfirmationQueue
 from da_semantic.evidence import EvidenceEdge, EvidenceGraph, UnificationResult
 from da_semantic.export import export_semantic_layer
 from da_semantic.learning import CaliberConflict, LearningLoop
+from da_semantic.metric_sql import (
+    TrialResult,
+    component_sql,
+    resolve_time_column,
+    trial_metric,
+    validate_metric,
+)
 from da_semantic.mining import MiningReport, mine_query_log
 from da_semantic.model import (
     Binding,
@@ -13,6 +20,7 @@ from da_semantic.model import (
     EnumMapping,
     JoinPath,
     Metric,
+    MetricComponent,
     SemanticRole,
     VerifiedAnswer,
 )
@@ -36,6 +44,7 @@ __all__ = [
     "JoinPath",
     "LearningLoop",
     "Metric",
+    "MetricComponent",
     "MetricMatch",
     "MetricResolver",
     "MiningReport",
@@ -43,10 +52,15 @@ __all__ = [
     "SemanticStore",
     "UnificationResult",
     "VerifiedAnswer",
+    "TrialResult",
     "VersionedRecord",
     "bootstrap_semantic_layer",
     "export_semantic_layer",
     "mine_query_log",
     "profile_catalog",
+    "component_sql",
+    "resolve_time_column",
+    "trial_metric",
+    "validate_metric",
     "value_overlaps",
 ]

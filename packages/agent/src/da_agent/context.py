@@ -55,7 +55,7 @@ def render_semantics(
         if m.restricted:
             continue  # 受限层口径不进低权限上下文（M1：restricted 一律裁剪）
         mark = "✓已确认" if m.verified else "草稿"
-        lines.append(f"- 指标[{m.name}]（{mark}）：{m.definition}；表达式参考：{m.expr}")
+        lines.append(f"- 指标[{m.name}]（{mark}）：{m.caliber_text()}")
     for e in entities:
         alias = "/".join(e.aliases) if e.aliases else e.name
         # 漂移冻结的绑定不进上下文（宁可少答，不带病运行）
@@ -65,7 +65,11 @@ def render_semantics(
         ]
         if not active:
             continue
-        bind = ", ".join(f"{b.table}.{b.column}" for b in active)
+        bind = ", ".join(
+            f"{b.table}: {b.expr}（转换自 {b.column}）" if b.expr
+            else f"{b.table}.{b.column}"
+            for b in active
+        )
         lines.append(f"- 实体[{e.name}]（别名：{alias}）：物理绑定 {bind}")
         for jp in e.join_paths:
             lines.append(f"  - 关联路径：{jp.expr}（置信度 {jp.confidence}）")

@@ -59,6 +59,24 @@ def _apply_min_aggregation(tree: exp.Expression, min_rows: int) -> exp.Expressio
     return tree
 
 
+def validate_expression_fragment(expr: str, dialect: str) -> str | None:
+    """校验 SQL 片段（转换绑定/指标表达式）：只允许本表字段表达式。
+
+    返回错误信息；None = 通过。禁止子查询/表引用/多语句（防转换绑定成为注入面）。
+    """
+    if ";" in expr:
+        return "片段不允许包含分号"
+    try:
+        tree = sqlglot.parse_one(f"SELECT {expr}", read=dialect)
+    except sqlglot.errors.ParseError as e:
+        return f"表达式解析失败: {e}"
+    if len(list(tree.find_all(exp.Select))) > 1:
+        return "片段不允许包含子查询"
+    if list(tree.find_all(exp.Table)):
+        return "片段不允许引用其他表"
+    return None
+
+
 INJECTION_MARKERS = (
     "忽略之前", "忽略上述", "ignore previous", "ignore above",
     "disregard", "system prompt", "新的指令",

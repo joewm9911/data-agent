@@ -22,6 +22,7 @@ from da_semantic import (
     EnumMapping,
     JoinPath,
     Metric,
+    MetricComponent,
     SemanticRole,
     SemanticStore,
 )
@@ -147,18 +148,24 @@ async def seed_semantics(store: SemanticStore, actor: str = "bootstrap") -> None
     gmv = Metric(
         name="GMV",
         aliases=["成交额", "销售额"],
-        definition=(
-            "已支付订单（stat=1）金额汇总，按支付日期 pay_dt 归属，"
-            "排除测试账号（cust_no 以 TEST 开头）"
+        definition="已支付订单金额汇总，按支付日期归属，排除测试账号",
+        numerator=MetricComponent(
+            expr="SUM(order_amt)",
+            description="已支付订单金额",
+            table="orders",
+            filter="stat = 1 AND cust_no NOT LIKE 'TEST%'",
         ),
-        expr="SUM(order_amt) WHERE stat = 1 AND cust_no NOT LIKE 'TEST%'",
+        time_field="支付日期",
         grain=["day", "chan"],
         verified=True,
     )
     ticket_volume = Metric(
         name="工单量",
-        definition="按 created_at 统计的客服工单数量",
-        expr="COUNT(*) FROM cs_tickets",
+        definition="客服工单数量，按创建日期统计",
+        numerator=MetricComponent(
+            expr="COUNT(*)", description="工单数", table="cs_tickets"
+        ),
+        time_field="工单创建日期",
         grain=["day", "cat"],
         verified=True,
     )

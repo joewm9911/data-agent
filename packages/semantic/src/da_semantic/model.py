@@ -15,11 +15,16 @@ EvidenceKind = Literal["query_log", "value_overlap", "lineage", "name_similarity
 
 
 class Binding(BaseModel):
-    """概念 → 物理落点。grain 标注防粒度冲突（明细表 vs 聚合表）。"""
+    """概念 → 物理落点。grain 标注防粒度冲突（明细表 vs 聚合表）。
+
+    expr 非空时为 SQL 转换绑定（表达式而非裸列，如 strftime('%Y-%m', pay_dt)）；
+    column 仍记录主要来源列，供漂移冻结追踪。
+    """
 
     table: str  # 完整限定名 database.table
     column: str
     grain: str = ""
+    expr: str = ""  # SQL 转换片段（只允许引用本表字段，禁止子查询）
 
 
 class JoinPath(BaseModel):
@@ -56,15 +61,61 @@ class Entity(BaseModel):
     frozen_bindings: list[str] = Field(default_factory=list)
 
 
+class MetricComponent(BaseModel):
+    """分子/分母组件：底层各自独立携带表与 filter（支持跨表比率与分侧过滤）。
+
+    配置层当前只开放指标级单表单 filter，保存时写入两个组件（模型与配置分层）。
+    expr 为聚合表达式（如 COUNT(*)、SUM(order_amt)），不含 WHERE。
+    """
+
+    expr: str
+    description: str = ""
+    table: str = ""
+    filter: str = ""  # 组件级过滤（SQL 片段，可空）
+
+
 class Metric(BaseModel):
+    """指标八要素：名/别名、描述、关联表、统计时间字段、filter、分子+描述、分母+描述。
+
+    - time_field 引用语义角色名（指标级单一字段——分子分母时间口径强制一致）；
+      跨表时该语义角色必须在两张表都有绑定（保存/试算强制校验）。
+    - denominator 为 None 即单一聚合指标。
+    - expr 为旧式单表达式字段（向后兼容；numerator 存在时优先用组件模型）。
+    """
+
     name: str
-    definition: str  # 业务口径描述，回答时作为口径声明输出
-    expr: str  # SQL 表达式
+    definition: str  # 指标描述，回答时作为口径声明输出
+    expr: str = ""  # 旧式 SQL 表达式（兼容）
+    numerator: MetricComponent | None = None
+    denominator: MetricComponent | None = None
+    time_field: str = ""  # 统计时间的语义层字段（语义角色名引用）
     # 业务黑话别名（"成交额"="GMV"）：指标直连匹配的判决依据，澄清即沉淀
     aliases: list[str] = Field(default_factory=list)
     grain: list[str] = Field(default_factory=list)
     verified: bool = False  # 人工确认标记
     restricted: bool = False  # 权限分区：受限层不进低权限用户上下文（6.2-3）
+
+    def caliber_text(self) -> str:
+        """完整口径文本（注入 agent 上下文与口径声明）。"""
+        if self.numerator is None:
+            return f"{self.definition}；表达式参考：{self.expr}"
+        parts = [self.definition]
+        num = self.numerator
+        num_src = f"{num.table} 表" if num.table else ""
+        num_flt = f"，过滤 {num.filter}" if num.filter else ""
+        parts.append(
+            f"分子：{num.expr}（{num.description or '—'}；{num_src}{num_flt}）"
+        )
+        if self.denominator is not None:
+            den = self.denominator
+            den_src = f"{den.table} 表" if den.table else ""
+            den_flt = f"，过滤 {den.filter}" if den.filter else ""
+            parts.append(
+                f"分母：{den.expr}（{den.description or '—'}；{den_src}{den_flt}）"
+            )
+        if self.time_field:
+            parts.append(f"统计时间字段：{self.time_field}（分子分母口径一致）")
+        return "；".join(parts)
 
 
 class CounterExample(BaseModel):

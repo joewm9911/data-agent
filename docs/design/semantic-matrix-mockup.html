@@ -1,0 +1,294 @@
+<title>语义映射矩阵 · 设计稿</title>
+<style>
+  :root { --page:#f5f4f0; --ink:#1c1c1a; --ink2:#6b6a64; --card:#ffffff;
+    --line:#e3e1d9; --accent:#4da3ff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --page:#101214; --ink:#e8e8e4; --ink2:#98978f; --card:#181b1e;
+      --line:#2b2e33; }
+  }
+  :root[data-theme="dark"] { --page:#101214; --ink:#e8e8e4; --ink2:#98978f;
+    --card:#181b1e; --line:#2b2e33; }
+  :root[data-theme="light"] { --page:#f5f4f0; --ink:#1c1c1a; --ink2:#6b6a64;
+    --card:#ffffff; --line:#e3e1d9; }
+  body { background:var(--page); color:var(--ink); margin:0;
+    font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif; }
+  .wrap { max-width:1060px; margin:0 auto; padding:40px 24px 64px; }
+  h1 { font-size:22px; font-weight:600; margin:0 0 6px; }
+  .lede { color:var(--ink2); font-size:14px; margin:0 0 28px; max-width:64ch;
+    line-height:1.7; }
+  .note { display:flex; gap:10px; align-items:baseline; margin:8px 0;
+    font-size:13px; color:var(--ink2); line-height:1.6; }
+  .note b { color:var(--ink); font-weight:600; }
+  .num { flex:none; width:20px; height:20px; border-radius:50%;
+    background:var(--accent); color:#fff; font-size:12px; display:flex;
+    align-items:center; justify-content:center; transform:translateY(3px); }
+  .caption { font-size:13px; color:var(--ink2); margin:26px 0 10px;
+    text-transform:uppercase; letter-spacing:.08em; }
+
+  /* ---- 控制台深色框架（产品实际形态，刻意保持深色） ---- */
+  .console { background:#0d1117; border:1px solid #2d333b; border-radius:12px;
+    padding:18px; color:#e6edf3; font-size:12.5px; overflow-x:auto; }
+  .cbar { display:flex; gap:8px; align-items:center; margin-bottom:12px;
+    flex-wrap:wrap; }
+  .cbar .t { font-size:14px; font-weight:600; }
+  .btn { background:#1c2129; border:1px solid #2d333b; color:#e6edf3;
+    border-radius:6px; padding:5px 11px; font-size:12px; }
+  .btn.p { background:#4da3ff; border-color:#4da3ff; color:#fff; }
+  .grid { border-collapse:collapse; width:100%; min-width:900px;
+    background:#161b22; border:1px solid #2d333b; border-radius:8px; }
+  .grid th, .grid td { text-align:left; padding:9px 12px; vertical-align:top;
+    border-bottom:1px solid #2d333b; }
+  .grid th + th, .grid td + td { border-left:1px solid #2d333b; }
+  .grid thead th { background:#1c2129; color:#8b949e; font-weight:500;
+    position:sticky; top:0; }
+  .grid thead small, .grid td small { color:#8b949e; font-weight:400; }
+  .grid .lcol { width:220px; background:#161b22; position:sticky; left:0; }
+  .ghead td { background:#221d3a; color:#afa9ec; font-weight:600; }
+  .ghead.m td { background:#12291f; color:#5dcaa5; }
+  .chip { font-family:ui-monospace,Menlo,monospace; font-size:11.5px;
+    background:#1c2129; border:1px solid #2d333b; border-radius:6px;
+    padding:2px 8px; display:inline-block; }
+  .tag { display:inline-block; font-size:10.5px; padding:1px 7px;
+    border-radius:9px; margin-left:5px; }
+  .tag.k { background:#2a2450; color:#afa9ec; }
+  .tag.r { background:#1c2129; color:#8b949e; }
+  .tag.d { background:#3a2c10; color:#d29922; }
+  .tag.v { background:#12291f; color:#3fb950; }
+  .ev { font-size:10.5px; margin-top:4px; }
+  .ev.h { color:#3fb950; } .ev.a { color:#d29922; }
+  .desc { color:#8b949e; font-size:11px; margin-top:3px; line-height:1.5; }
+  .dash { color:#4d5561; text-align:center; }
+  .plus { color:#8b949e; border:1px dashed #3d444e; border-radius:6px;
+    padding:2px 10px; font-size:12px; }
+  .picker { margin-top:5px; background:#0d1117; border:1px solid #4da3ff;
+    border-radius:6px; overflow:hidden; }
+  .picker div { padding:5px 9px; font-family:ui-monospace,Menlo,monospace;
+    font-size:11px; color:#8b949e; }
+  .picker .top { background:#11253d; color:#e6edf3; }
+  .picker .top span { float:right; color:#4da3ff;
+    font-family:-apple-system,sans-serif; }
+  .legend { display:flex; gap:18px; margin-top:12px; font-size:11.5px;
+    color:#8b949e; flex-wrap:wrap; }
+  .legend i { font-style:normal; }
+</style>
+<div class="wrap">
+  <h1>语义层 · 映射矩阵设计稿</h1>
+  <p class="lede">行是语义对象（实体的主键、语义角色、枚举，以及指标），列是接入的物理数据表，
+  单元格即"绑定"。查看与添加是同一个视图：空格点击就地绑定，不再有割裂的 JSON 编辑器。</p>
+
+  <div class="caption">主视图 · 映射矩阵</div>
+  <div class="console">
+    <div class="cbar">
+      <span class="t">语义层 · 映射矩阵</span>
+      <span style="flex:1"></span>
+      <button class="btn">＋ 新建实体</button>
+      <button class="btn">＋ 新建指标</button>
+      <button class="btn">⊞ 添加数据表列</button>
+      <label style="color:#8b949e;font-size:12px">仅看未绑定 <input type="checkbox"></label>
+    </div>
+    <table class="grid">
+      <thead>
+        <tr>
+          <th class="lcol">语义对象</th>
+          <th>orders<br><small>订单表 · 3,000 行</small></th>
+          <th>crm_contacts<br><small>客户表 · 510 行</small></th>
+          <th>cs_tickets<br><small>工单表 · 500 行</small></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="ghead"><td colspan="4">▣ 实体 · 客户
+          <span style="font-weight:400;color:#7f77dd">　别名：会员 / 买家 / 用户</span>
+          <span style="float:right;font-weight:400;color:#7f77dd">✎ 编辑实体 · v3</span></td></tr>
+        <tr>
+          <td class="lcol"><b>客户ID</b><span class="tag k">主键</span>
+            <div class="desc">统一客户标识，跨表关联依据</div></td>
+          <td><span class="chip">cust_no</span><div class="ev h">✓ 人工确认</div></td>
+          <td><span class="chip">client_code</span><div class="ev h">✓ 人工确认</div></td>
+          <td><span class="chip">customer_id</span><div class="ev a">◈ 值域重叠 98% · 待确认</div></td>
+        </tr>
+        <tr>
+          <td class="lcol"><b>支付日期</b><span class="tag r">语义角色</span>
+            <div class="desc">GMV 归属日期口径</div></td>
+          <td><span class="chip">pay_dt</span><div class="ev h">✓ 人工确认</div></td>
+          <td class="dash">—</td>
+          <td class="dash">—</td>
+        </tr>
+        <tr>
+          <td class="lcol"><b>订单状态</b><span class="tag r">枚举</span>
+            <div class="desc">1=已支付 · 2=待支付 · 3=已退款</div></td>
+          <td><span class="chip">stat</span><div class="ev h">✓ 人工确认</div></td>
+          <td class="dash">—</td>
+          <td class="dash">—</td>
+        </tr>
+        <tr>
+          <td class="lcol"><b>支付月份</b><span class="tag r">语义角色 · 派生</span>
+            <div class="desc">月度口径的统一分组键</div></td>
+          <td><span class="chip">ƒ strftime('%Y-%m', pay_dt)</span>
+            <div class="ev h">✓ 人工确认 · SQL 转换</div></td>
+          <td class="dash">—</td>
+          <td class="dash">—</td>
+        </tr>
+        <tr>
+          <td class="lcol"><b>注册年份</b><span class="tag d">草稿</span>
+            <div class="desc">客户首次注册的年份</div></td>
+          <td class="dash">—</td>
+          <td style="background:#11253d">
+            <div style="display:flex;gap:0;font-size:11px;margin-bottom:5px">
+              <span style="padding:3px 10px;color:#8b949e;border:1px solid #2d333b;
+                border-radius:6px 0 0 6px">选择列</span>
+              <span style="padding:3px 10px;color:#fff;background:#4da3ff;
+                border:1px solid #4da3ff;border-radius:0 6px 6px 0;font-weight:600">
+                ƒ SQL 转换</span>
+            </div>
+            <div class="picker">
+              <div class="top" style="font-size:11.5px">strftime('%Y', signup_dt)</div>
+              <div style="color:#3fb950;font-family:-apple-system,sans-serif">
+                ✓ 方言校验通过（sqlite）</div>
+              <div style="font-family:-apple-system,sans-serif">
+                预览：2025-01-01 → <b style="color:#e6edf3">2025</b>
+                2025-03-15 → <b style="color:#e6edf3">2025</b></div>
+            </div>
+            <div style="margin-top:5px;font-size:11px">
+              <span style="color:#4da3ff;font-weight:600">保存绑定</span>
+              <span style="color:#8b949e;margin-left:10px">取消</span></div>
+          </td>
+          <td class="dash"><span class="plus">＋</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="legend">
+      <span><i style="color:#3fb950">✓</i> 人工确认（判决性）</span>
+      <span><i style="color:#d29922">◈</i> 算法证据（值域 / join，点击可确认）</span>
+      <span><span class="plus" style="padding:0 8px">＋</span> 空格点击即绑定</span>
+      <span><i style="color:#e6edf3">ƒ</i> SQL 转换绑定（表达式而非裸列）</span>
+      <span><i style="color:#f85149">❄</i> 漂移冻结（该列 schema 变更后）</span>
+    </div>
+  </div>
+
+  <div class="caption">指标配置 · 独立视图（分子 / 分母 / 时间口径）</div>
+  <div class="console">
+    <div class="cbar">
+      <span class="t">语义层 · 指标</span>
+      <span style="flex:1"></span>
+      <button class="btn p">＋ 新建指标</button>
+    </div>
+
+    <table class="grid" style="min-width:0;margin-bottom:14px">
+      <thead><tr>
+        <th style="width:140px">指标</th><th>构成（分子 ÷ 分母）</th>
+        <th style="width:110px">关联数据表</th>
+        <th style="width:110px">统计时间字段</th><th style="width:86px">状态</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td><b>GMV</b><div class="desc">别名：成交额 / 销售额</div></td>
+          <td><span class="chip">SUM(order_amt)</span>
+            <div class="desc">单一聚合，无分母 ·
+              filter：stat=1 且排除测试账号</div></td>
+          <td><span class="chip">orders</span></td>
+          <td><span class="tag r">支付日期</span></td>
+          <td><span class="tag v">已确认 v2</span></td>
+        </tr>
+        <tr style="background:#11253d">
+          <td style="border-bottom:none"><b>工单解决率</b>
+            <div class="desc" style="color:#4da3ff">▼ 编辑中</div></td>
+          <td style="border-bottom:none">
+            <span class="chip">已解决工单数</span> ÷ <span class="chip">总工单数</span></td>
+          <td style="border-bottom:none"><span class="chip">cs_tickets</span></td>
+          <td style="border-bottom:none"><span class="tag r">工单创建日期</span></td>
+          <td style="border-bottom:none"><span class="tag d">草稿</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div style="border:1px solid #4da3ff;border-radius:8px;padding:14px;
+      background:#0d1117">
+      <div style="display:grid;grid-template-columns:150px 1fr;gap:8px 12px;
+        font-size:12px;align-items:center;margin-bottom:12px">
+        <span class="desc" style="margin:0">指标名</span>
+        <span><span class="chip">工单解决率</span>
+          <span class="chip" style="margin-left:6px">别名：解决率 / 结案率</span></span>
+        <span class="desc" style="margin:0">指标描述</span>
+        <span class="chip" style="font-family:-apple-system,sans-serif">
+          已解决工单占全部工单的比例，衡量客服处理效率</span>
+        <span class="desc" style="margin:0">关联的数据表</span>
+        <span><span class="chip">cs_tickets ▾</span>
+          <span style="color:#4d5561;font-size:11px;margin-left:8px">
+            分子分母都在此表上计算</span></span>
+        <span class="desc" style="margin:0">统计时间的语义层字段</span>
+        <span><span class="tag r" style="margin:0">工单创建日期 ▾</span>
+          <span style="color:#4d5561;font-size:11px;margin-left:8px">
+            下拉列出矩阵中已定义的语义角色，漂移冻结沿引用传导</span></span>
+        <span class="desc" style="margin:0">filter 表达式</span>
+        <span><span class="chip">customer_id NOT LIKE 'TEST%'</span>
+          <span style="color:#4d5561;font-size:11px;margin-left:8px">
+            公共过滤，同时作用于分子与分母的 WHERE；可留空</span></span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div style="border:1px solid #2d333b;border-radius:8px;padding:10px">
+          <div style="color:#5dcaa5;font-weight:600;font-size:11.5px;
+            margin-bottom:6px">分子</div>
+          <div class="desc">表达式
+            <span class="chip">COUNT(*) WHERE resolved = 1</span></div>
+          <div class="desc" style="margin-top:5px">分子描述
+            <span style="color:#e6edf3">已标记解决的工单数</span></div>
+        </div>
+        <div style="border:1px solid #2d333b;border-radius:8px;padding:10px">
+          <div style="color:#d29922;font-weight:600;font-size:11.5px;
+            margin-bottom:6px">分母 <span style="color:#4d5561;font-weight:400">
+            可选，留空即单一聚合指标（如 GMV）</span></div>
+          <div class="desc">表达式 <span class="chip">COUNT(*)</span></div>
+          <div class="desc" style="margin-top:5px">分母描述
+            <span style="color:#e6edf3">该期全部工单数</span></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:16px;margin-top:10px;font-size:11.5px;
+        color:#8b949e;align-items:center;flex-wrap:wrap">
+        <span style="color:#3fb950">✓ 试算 2026-06：163 ÷ 200 = 81.5%</span>
+        <span style="flex:1"></span>
+        <span class="btn" style="font-size:11px;padding:4px 12px">试算</span>
+        <span class="btn p" style="font-size:11px;padding:4px 12px">保存（产生新版本）</span>
+      </div>
+    </div>
+    <div class="legend" style="margin-top:10px">
+      <span>字段：指标名/别名 · 指标描述 · 关联数据表 · 统计时间字段 ·
+        filter 表达式 · 分子+描述 · 分母+描述</span>
+      <span>统计时间字段引用矩阵语义角色 → 漂移冻结可传导</span>
+      <span>保存前强制试算（宁可拒存，不给错口径）</span>
+    </div>
+  </div>
+
+  <div class="caption">交互说明</div>
+  <div class="note"><span class="num">1</span><span><b>分层两视图。</b>矩阵只放实体与属性
+    （跨表映射是它的本质形状）；指标是公式组合而非跨表映射，独立成结构化配置视图。
+    矩阵定义"词汇表"（属性、语义角色），指标引用词汇表来组合。</span></div>
+  <div class="note"><span class="num">2</span><span><b>指标八要素。</b>指标名（含别名）、
+    指标描述、关联的数据表（单表，分子分母都在其上计算）、统计时间的语义层字段
+    （引用矩阵中的语义角色，漂移冻结沿"物理列 → 语义角色 → 指标"传导）、
+    filter 表达式（公共过滤，同时作用于分子与分母，如排除测试账号；可留空）、
+    分子 + 分子描述、分母 + 分母描述（分母留空即单一聚合指标，如 GMV）。
+    生成 SQL 形如：AGG(分子) / AGG(分母) FROM 关联表 WHERE filter AND 时间范围。
+    保存前强制试算预览。</span></div>
+  <div class="note"><span class="num">•</span><span><b>模型与配置分层。</b>底层数据模型中，
+    分子与分母是独立组件，各自携带 表达式 / 描述 / 数据表 / filter（天然支持跨表比率与
+    分侧过滤）；配置界面当前只开放指标级的单一数据表与单一 filter，保存时写入两个组件。
+    未来放开跨表只是解锁 UI 字段，无需改模型与存储。</span></div>
+  <div class="note"><span class="num">•</span><span><b>时间口径一致性（硬约束）。</b>
+    统计时间的语义层字段永远是指标级的单一字段——分子分母必须共用同一时间口径，
+    这正是它不下放到组件级的原因。当分子分母来自不同表时，该语义角色必须在
+    <b>两张表都有绑定</b>（矩阵中同一行的两个格都非空）；保存与试算时强制校验，
+    缺失则拒存并提示"请先在映射矩阵为表 X 绑定语义角色 Y"。生成 SQL 时各表用
+    各自绑定的物理列（含 SQL 转换表达式）过滤同一时间范围。</span></div>
+  <div class="note"><span class="num">3</span><span><b>单元格 = 绑定 + 证据。</b>绿勾表示人工判决过；
+    橙色菱形是算法证据（值域重叠 / 历史 join），点击徽章可一键转为已确认，等价于确认队列里的选择题。</span></div>
+  <div class="note"><span class="num">4</span><span><b>空格点击就地绑定，两种模式。</b>
+    "选择列"模式列出该表字段并按证据分排序推荐；"ƒ SQL 转换"模式输入表达式片段
+    （只允许引用本表字段），保存前经护栏做方言解析校验，并用采样行实时预览转换结果——
+    示例中"注册年份"由 strftime('%Y', signup_dt) 派生。已保存的转换绑定在单元格中
+    以 ƒ 前缀展示（如"支付月份"行）。</span></div>
+  <div class="note"><span class="num">5</span><span><b>列 = 已接入数据表。</b>"添加数据表列"
+    接元数据浏览器，勾选新表后它成为矩阵新列；超过 4 列时矩阵横向滚动，左列冻结。</span></div>
+  <div class="note"><span class="num">6</span><span><b>状态体系与后端一一对应。</b>已确认 =
+    verified，草稿 = 冷启动/LLM 产物，冻结 = schema 漂移；徽章即数据，无需新增模型字段。</span></div>
+</div>

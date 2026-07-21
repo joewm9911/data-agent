@@ -5,6 +5,7 @@ from da_governance.guard import (
     prepare_statement,
     referenced_objects,
     sanitize_result_text,
+    validate_expression_fragment,
 )
 
 __all__ = [
@@ -15,4 +16,5 @@ __all__ = [
     "prepare_statement",
     "referenced_objects",
     "sanitize_result_text",
+    "validate_expression_fragment",
 ]

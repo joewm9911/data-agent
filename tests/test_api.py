@@ -20,6 +20,7 @@ class FakeAgent:
 
     def __init__(self, store):
         self._semantics = store
+        self._connector = type("C", (), {"dialect": "sqlite"})()
         self.audit_sink = InMemoryAuditSink()
         self.calls = 0
 
